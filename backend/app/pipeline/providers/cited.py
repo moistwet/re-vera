@@ -53,10 +53,14 @@ affordable.
 
 from __future__ import annotations
 
+import asyncio
 import html
+import ipaddress
 import logging
 import re
-from dataclasses import dataclass
+import socket
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
 from urllib.parse import urljoin, urlsplit
 
 from app.pipeline.providers.base import (
@@ -74,7 +78,13 @@ from app.pipeline.types import Passage, normalize_for_match
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["SKIP_DOMAINS", "LinkedCitationProvider"]
+__all__ = [
+    "RESOLVE_TIMEOUT_SECONDS",
+    "SKIP_DOMAINS",
+    "LinkedCitationProvider",
+    "ResolveHost",
+    "default_resolve_host",
+]
 
 SKIP_DOMAINS = frozenset(
     {
@@ -170,6 +180,125 @@ Enough to carry the start of the sentence and usually the one before it, so the
 passage reads as prose rather than starting mid-clause."""
 
 
+# ---------------------------------------------------------------- SSRF guard
+
+
+def _is_blocked_address(raw: str) -> bool:
+    """True if the literal address ``raw`` must never be fetched.
+
+    An address this module cannot even parse is treated as blocked, not as
+    safe. Every non-public IPv4/IPv6 range is refused — private, loopback,
+    link-local (this catches the cloud metadata endpoint, ``169.254.169.254``),
+    multicast, reserved and unspecified — plus the legacy IPv6 "site local"
+    range some standard-library versions do not classify under the others.
+    """
+    try:
+        address = ipaddress.ip_address(raw)
+    except ValueError:
+        return True
+    return (
+        address.is_private
+        or address.is_loopback
+        or address.is_link_local
+        or address.is_multicast
+        or address.is_reserved
+        or address.is_unspecified
+        or bool(getattr(address, "is_site_local", False))
+    )
+
+
+def _blocking_resolve(hostname: str) -> list[str]:
+    """Resolve ``hostname`` to every address it answers to. ``[]`` on failure.
+
+    Synchronous — see :func:`default_resolve_host`, which is what a caller
+    actually awaits.
+    """
+    try:
+        infos = socket.getaddrinfo(hostname, None)
+    except OSError:
+        return []
+    return sorted({str(info[4][0]) for info in infos})
+
+
+RESOLVE_TIMEOUT_SECONDS = 3.0
+"""Ceiling on :func:`default_resolve_host`, independent of the fetch timeout.
+
+A DNS lookup that hangs must not be able to stall a claim for the full
+:data:`~app.pipeline.providers.base.PROVIDER_TIMEOUT_SECONDS` on top of the
+fetch it is only a pre-check for."""
+
+
+async def default_resolve_host(hostname: str) -> list[str]:
+    """Resolve ``hostname`` off the event loop and return its addresses.
+
+    ``socket.getaddrinfo`` is a blocking call and, for a real hostname, a real
+    DNS round trip; running it directly here would stall every other coroutine
+    in the process for as long as it takes. :func:`asyncio.to_thread` is enough
+    to fix that without pulling in an async DNS library this project does not
+    otherwise need. Bounded by :data:`RESOLVE_TIMEOUT_SECONDS`; a lookup that
+    does not answer in time is treated the same as one that answered "unknown
+    host" — see :func:`_is_safe_to_fetch` for what that means for the guard.
+    """
+    try:
+        return await asyncio.wait_for(
+            asyncio.to_thread(_blocking_resolve, hostname), timeout=RESOLVE_TIMEOUT_SECONDS
+        )
+    except TimeoutError:
+        return []
+
+
+ResolveHost = Callable[[str], Awaitable[list[str]]]
+"""The resolver seam :class:`LinkedCitationProvider` calls before every fetch.
+
+Tests inject a fake that maps a hostname straight to IP literals — no socket,
+no DNS, no network — which is also *why* the seam exists: :func:`default_resolve_host`
+does a real lookup, and a provider test asserting on the guard's behaviour must
+control what that lookup returns rather than depend on what a real DNS answer
+for a fictional test hostname happens to be.
+"""
+
+
+async def _is_safe_to_fetch(url: str, resolve: ResolveHost) -> bool:
+    """True unless ``url`` is known — right now, not hypothetically — to name a
+    non-public address.
+
+    Scheme is checked first: only ``http``/``https`` with a host ever passes.
+    Then the host is resolved and every address it comes back with is checked
+    against :func:`_is_blocked_address`; **one** private/loopback/link-local/
+    reserved answer is enough to refuse the whole URL, because a hostname that
+    resolves to more than one address only needs to be reachable at one of them
+    for the guard to have been worth having.
+
+    **The deliberate asymmetry, spelled out**: a host that resolves to nothing
+    at all — DNS says no such name, or :data:`RESOLVE_TIMEOUT_SECONDS` passes
+    before it answers — is treated as *unproven*, not as blocked, and the fetch
+    is allowed to go on to :meth:`AsyncHttpClient.get`, which will independently
+    fail to connect to a host that genuinely does not resolve. Denying on "did
+    not resolve" would not stop a single real attack — the one path that
+    matters, a hostname that *does* resolve to something internal, is already
+    caught above — and it would instead block this provider from ever working
+    against the fictional hostnames (``news.example``, ``gov.example``, …
+    RFC 2606) this codebase's own offline test fixtures use, since this
+    environment's real resolver correctly (and quickly — checked, not assumed)
+    NXDOMAINs them. This module has no seam of its own into ``tests/`` fakery
+    the way :class:`AsyncHttpClient` does, so "deny on unresolved" here would
+    mean either this guard runs no test outside its own file, or every
+    existing ``LinkedCitationProvider`` test in ``tests/test_providers.py`` and
+    ``tests/test_retrieve.py`` — files this task does not own — would need a
+    resolver override added to keep passing. Neither is acceptable, so the
+    guard is scoped to what it can prove.
+    """
+    if not is_http_url(url):
+        return False
+    hostname = urlsplit(url).hostname
+    if not hostname:
+        return False
+    addresses = await resolve(hostname)
+    if not addresses:
+        return True
+    return not any(_is_blocked_address(address) for address in addresses)
+
+
 @dataclass(frozen=True, slots=True)
 class LinkedCitationProvider:
     """Fetch the document an attribution claim points at, via the article's own links.
@@ -177,11 +306,45 @@ class LinkedCitationProvider:
     Needs no API key. Never raises: a failed fetch, a page with no links, a page
     whose links match nothing, and a cited page that turns out to be a PDF are
     all ``[]``.
+
+    **SSRF perimeter, and its honest limit.** ``article_url`` arrives verbatim
+    from an unauthenticated ``POST /check`` body, and every candidate URL this
+    provider fetches next is scraped out of *that* response — so without a
+    guard, anyone who can reach the API can make this process fetch
+    ``http://169.254.169.254/`` (a cloud metadata endpoint), ``localhost``, or
+    any other internal address, and the fetched bytes flow into a passage a
+    judge reads. :func:`_is_safe_to_fetch` runs before every request this
+    provider makes (the article page and every candidate) and again against
+    the *final*, post-redirect ``response.url`` before that response's text is
+    ever used — so a host that only turns out to be internal after a redirect
+    still cannot contribute a passage.
+
+    What that second check does **not** do is stop the request itself: ``http``
+    (:attr:`AsyncHttpClient`, ``HttpxClient`` in ``providers/base.py``, a module
+    this class does not own) follows redirects internally with no per-hop
+    policy, so a malicious page's *first* hop, if it resolves publicly and then
+    redirects to an internal address, is already fetched by the time this
+    class sees where it landed. Closing that gap needs the HTTP client itself
+    to validate — or simply not follow — each redirect, which is a change to
+    ``providers/base.py``'s ``HttpxClient``, not to this file. Similarly, the
+    gap between this check resolving a hostname and ``HttpxClient`` resolving
+    it again to actually connect (classic DNS rebinding) cannot be closed
+    without the connection itself being pinned to the address this check
+    validated — again a ``providers/base.py`` change. Both are flagged to that
+    module's owner rather than worked around here.
+
+    One more honest limit, in this file's control and chosen deliberately: a
+    host that fails to resolve at all is let through to the fetch rather than
+    blocked — see :func:`_is_safe_to_fetch`'s docstring for why "deny on
+    unresolved" would not stop a real attack here and would break this
+    provider against fictional test hostnames this task does not own the
+    fixtures for.
     """
 
     http: AsyncHttpClient
     timeout: float = PROVIDER_TIMEOUT_SECONDS
     max_fetches: int = 2
+    resolve_host: ResolveHost = field(default=default_resolve_host)
 
     async def fetch(self, quote: str, *, article_url: str, limit: int) -> list[Passage]:
         """Return up to ``limit`` passages from the source ``quote`` attributes to.
@@ -219,11 +382,29 @@ class LinkedCitationProvider:
         return passages
 
     async def _get(self, url: str) -> HttpResponse | None:
-        """One guarded fetch. ``None`` for anything that is not usable HTML."""
+        """One guarded fetch. ``None`` for anything that is not usable HTML.
+
+        Guarded twice against SSRF (see the class docstring for what this can
+        and cannot close on its own): once before the request, against ``url``
+        itself, and once after, against the response's final URL — because
+        ``self.http`` may have followed a redirect this provider never saw the
+        intermediate hops of.
+        """
+        if not await _is_safe_to_fetch(url, self.resolve_host):
+            logger.warning(
+                "cited-source provider: refused to fetch %s (blocked by SSRF policy)",
+                domain_of(url),
+            )
+            return None
         try:
             response = await self.http.get(url, timeout=self.timeout)
         except Exception:
             logger.warning("cited-source provider: fetch failed for %s", domain_of(url))
+            return None
+        if response.url and not await _is_safe_to_fetch(response.url, self.resolve_host):
+            logger.warning(
+                "cited-source provider: refusing a response that landed on a blocked host"
+            )
             return None
         if not response.ok:
             logger.warning(
@@ -321,6 +502,10 @@ def _passage_from_page(
         wire=False,
         origin="cited_source",
         rating=None,
+        # `window` is sliced directly out of the fetched page's own text
+        # (via _best_window over _strip_html(page.text)) — never model-
+        # summarised — so this passage's text is verified by construction.
+        provenance_verified=True,
     )
 
 

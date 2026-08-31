@@ -70,6 +70,44 @@ def html_page(name: str, url: str) -> HttpResponse:
     )
 
 
+WEBSEARCH_PASSAGE_1 = (
+    "The median stall rental adjustment for the coming year is 4 per cent, the agency "
+    "said in a written reply."
+)
+WEBSEARCH_URL_1 = "https://gov.example/press/stall-rental-adjustment"
+WEBSEARCH_PASSAGE_2 = (
+    "The agency put the median adjustment at 4 per cent, well below the 40 per cent "
+    "circulating online."
+)
+WEBSEARCH_URL_2 = "https://news.example/hawker-rent-adjustment"
+WEBSEARCH_PASSAGE_3 = (
+    "Stallholders at three centres said they had been told of an increase at a "
+    "briefing last month."
+)
+WEBSEARCH_URL_3 = "https://daily.example/hawkers-briefing"
+"""The three (URL, text) pairs ``websearch_results.json`` carries, spelled out
+so provenance-verification fixtures below can be built to genuinely agree —
+or, deliberately, disagree — with them."""
+
+
+def verified_page(
+    text: str, url: str, *, content_type: str = "text/html; charset=utf-8"
+) -> HttpResponse:
+    """A GET response for BLOCKER B1's provenance-verification fetch.
+
+    Unlike ``html_page`` (which loads a fixture file for the cited-source
+    provider's link-following), this builds the body inline so a test can say
+    in one place exactly what page text a passage is being checked against —
+    the whole point of the tests that use it.
+    """
+    return HttpResponse(
+        status_code=200,
+        text=f"<html><body><p>{text}</p></body></html>",
+        url=url,
+        headers={"content-type": content_type},
+    )
+
+
 def responses_payload(results: list[dict[str, Any]], citations: list[str]) -> HttpResponse:
     """Build a Responses answer carrying ``results`` and citing ``citations``.
 
@@ -237,28 +275,48 @@ async def test_factcheck_survives_an_unexpected_payload_shape() -> None:
 
 
 async def test_websearch_parses_cited_results() -> None:
-    """The happy path: the tool ran, the answer was JSON, every URL was cited."""
-    http = RecordedHttpClient([recorded("websearch_results.json")])
+    """The happy path: the tool ran, the answer was JSON, every URL was cited,
+    and every passage's text is confirmed to actually be on the page it cites."""
+    http = RecordedHttpClient(
+        [
+            recorded("websearch_results.json"),
+            verified_page(WEBSEARCH_PASSAGE_1, WEBSEARCH_URL_1),
+            verified_page(WEBSEARCH_PASSAGE_2, WEBSEARCH_URL_2),
+            verified_page(WEBSEARCH_PASSAGE_3, WEBSEARCH_URL_3),
+        ]
+    )
     provider = OpenAIWebSearchProvider(http=http, api_key="test-key")
 
     passages = await provider.search("hawker stall rents 40%", limit=6)
 
     assert [passage.url for passage in passages] == [
-        "https://gov.example/press/stall-rental-adjustment",
-        "https://news.example/hawker-rent-adjustment",
-        "https://daily.example/hawkers-briefing",
+        WEBSEARCH_URL_1,
+        WEBSEARCH_URL_2,
+        WEBSEARCH_URL_3,
     ]
     assert all(passage.origin == "web" for passage in passages)
     assert all(passage.wire is False for passage in passages)
+    # BLOCKER B1: every passage's text was fetched and confirmed, not merely
+    # cited — this is what makes them fit to decide a verdict on their own.
+    assert all(passage.provenance_verified for passage in passages)
     assert passages[0].date == "2026-03-12"
     assert passages[1].outlet == "Example News"
     # The model gave no date for the third; a guessed one would be a fabricated fact.
     assert passages[2].date is None
+    # One POST to the search tool, one GET per passage to verify it.
+    assert len(http.requests) == 4
 
 
 async def test_websearch_request_carries_the_prompt_the_tool_and_the_key() -> None:
     """The assumed request shape, written down once here and once in the module."""
-    http = RecordedHttpClient([recorded("websearch_results.json")])
+    http = RecordedHttpClient(
+        [
+            recorded("websearch_results.json"),
+            verified_page(WEBSEARCH_PASSAGE_1, WEBSEARCH_URL_1),
+            verified_page(WEBSEARCH_PASSAGE_2, WEBSEARCH_URL_2),
+            verified_page(WEBSEARCH_PASSAGE_3, WEBSEARCH_URL_3),
+        ]
+    )
     provider = OpenAIWebSearchProvider(http=http, api_key="test-key", model="test-model")
 
     await provider.search("hawker stall rents", limit=3)
@@ -277,13 +335,30 @@ async def test_websearch_request_carries_the_prompt_the_tool_and_the_key() -> No
 
 
 async def test_websearch_honours_the_limit() -> None:
-    """Passages cost tokens in stages 3 and 4; the cap is a budget, not a preference."""
-    http = RecordedHttpClient([recorded("websearch_results.json")])
+    """Passages cost tokens in stages 3 and 4; the cap is a budget, not a preference.
+
+    It is also BLOCKER B1's "cap first, fetch second" budget: only the two
+    results ``limit`` keeps get a provenance-verification fetch at all — the
+    third scripted GET below would trip
+    ``RecordedHttpClient``'s "ran out of scripted outcomes" guard if it were
+    ever requested, so its absence from the request count proves the cap runs
+    before, not after, the fetch.
+    """
+    http = RecordedHttpClient(
+        [
+            recorded("websearch_results.json"),
+            verified_page(WEBSEARCH_PASSAGE_1, WEBSEARCH_URL_1),
+            verified_page(WEBSEARCH_PASSAGE_2, WEBSEARCH_URL_2),
+        ]
+    )
     provider = OpenAIWebSearchProvider(http=http, api_key="test-key")
 
     passages = await provider.search("hawker stall rents", limit=2)
 
     assert len(passages) == 2
+    assert all(passage.provenance_verified for passage in passages)
+    # One POST plus exactly two verification GETs — never a third.
+    assert len(http.requests) == 3
 
 
 async def test_websearch_drops_a_result_the_search_tool_never_returned() -> None:
@@ -306,7 +381,10 @@ async def test_websearch_drops_a_result_the_search_tool_never_returned() -> None
                     },
                 ],
                 citations=["https://gov.example/press/real"],
-            )
+            ),
+            # Only the one surviving result ever gets a verification fetch — the
+            # invented one was dropped by the citation gate before reaching it.
+            verified_page("The adjustment is 4 per cent.", "https://gov.example/press/real"),
         ]
     )
     provider = OpenAIWebSearchProvider(http=http, api_key="test-key")
@@ -314,6 +392,8 @@ async def test_websearch_drops_a_result_the_search_tool_never_returned() -> None
     passages = await provider.search("claim", limit=6)
 
     assert [passage.url for passage in passages] == ["https://gov.example/press/real"]
+    assert passages[0].provenance_verified is True
+    assert len(http.requests) == 2
 
 
 async def test_websearch_discards_an_answer_that_cites_nothing() -> None:
@@ -401,7 +481,8 @@ async def test_websearch_accepts_a_fenced_json_answer() -> None:
                     }
                 ),
                 url=RESPONSES_ENDPOINT,
-            )
+            ),
+            verified_page("Four per cent.", "https://gov.example/press/x"),
         ]
     )
     provider = OpenAIWebSearchProvider(http=http, api_key="test-key")
@@ -409,6 +490,7 @@ async def test_websearch_accepts_a_fenced_json_answer() -> None:
     passages = await provider.search("claim", limit=6)
 
     assert [passage.text for passage in passages] == ["Four per cent."]
+    assert passages[0].provenance_verified is True
 
 
 @pytest.mark.parametrize("status", [401, 429, 500])
@@ -427,6 +509,181 @@ async def test_websearch_survives_a_transport_failure() -> None:
     provider = OpenAIWebSearchProvider(http=http, api_key="test-key")
 
     assert await provider.search("claim", limit=6) == []
+
+
+# --------------------------------------------- BLOCKER B1: provenance verification
+
+
+async def test_websearch_drops_a_passage_whose_text_never_appears_on_the_cited_page() -> None:
+    """The headline correctness property, made real: the citation gate alone
+    (a URL the search tool actually returned) is not enough — a real page can
+    still sit under a hallucinated summary. This is the case B1 exists for: the
+    fetch succeeds, and the model's sentence is nowhere on the page it names.
+    That is proof of fabrication, not a network hiccup, so the passage is
+    dropped outright rather than merely marked unverified.
+    """
+    http = RecordedHttpClient(
+        [
+            responses_payload(
+                results=[
+                    {
+                        "text": "The agency confirmed the adjustment would be 40 per cent.",
+                        "url": "https://gov.example/press/real",
+                        "outlet": "gov.example",
+                        "date": "2026-03-12",
+                    }
+                ],
+                citations=["https://gov.example/press/real"],
+            ),
+            # The page the URL actually points to says nothing of the kind.
+            verified_page(
+                "The agency's press release covers hawker centre opening hours.",
+                "https://gov.example/press/real",
+            ),
+        ]
+    )
+    provider = OpenAIWebSearchProvider(http=http, api_key="test-key")
+
+    assert await provider.search("claim", limit=6) == []
+
+
+async def test_websearch_keeps_a_passage_unverified_when_the_fetch_fails() -> None:
+    """A dead or slow cited page is not evidence the model lied.
+
+    The passage survives with ``provenance_verified=False`` rather than being
+    dropped, and the fetch is never retried (cost rule) — the request count
+    below would be 3, not 2, if it were.
+    """
+    http = RecordedHttpClient(
+        [
+            responses_payload(
+                results=[
+                    {
+                        "text": "The adjustment is 4 per cent.",
+                        "url": "https://gov.example/press/real",
+                        "outlet": "gov.example",
+                        "date": "2026-03-12",
+                    }
+                ],
+                citations=["https://gov.example/press/real"],
+            ),
+            TimeoutError("gov.example took too long"),
+        ]
+    )
+    provider = OpenAIWebSearchProvider(http=http, api_key="test-key")
+
+    passages = await provider.search("claim", limit=6)
+
+    assert len(passages) == 1
+    assert passages[0].text == "The adjustment is 4 per cent."
+    assert passages[0].provenance_verified is False
+    assert len(http.requests) == 2
+
+
+async def test_websearch_keeps_a_passage_unverified_on_a_non_2xx_fetch() -> None:
+    """A 404 on the cited page settles nothing about the passage's honesty."""
+    http = RecordedHttpClient(
+        [
+            responses_payload(
+                results=[
+                    {
+                        "text": "The adjustment is 4 per cent.",
+                        "url": "https://gov.example/press/real",
+                        "outlet": "gov.example",
+                        "date": "2026-03-12",
+                    }
+                ],
+                citations=["https://gov.example/press/real"],
+            ),
+            HttpResponse(status_code=404, text="not found", url="https://gov.example/press/real"),
+        ]
+    )
+    provider = OpenAIWebSearchProvider(http=http, api_key="test-key")
+
+    passages = await provider.search("claim", limit=6)
+
+    assert len(passages) == 1
+    assert passages[0].provenance_verified is False
+
+
+async def test_websearch_keeps_a_passage_unverified_for_a_non_html_body() -> None:
+    """A PDF press release cannot be checked by this module's text extraction,
+    so it is left unverified rather than guessed at."""
+    http = RecordedHttpClient(
+        [
+            responses_payload(
+                results=[
+                    {
+                        "text": "The adjustment is 4 per cent.",
+                        "url": "https://gov.example/press/real.pdf",
+                        "outlet": "gov.example",
+                        "date": "2026-03-12",
+                    }
+                ],
+                citations=["https://gov.example/press/real.pdf"],
+            ),
+            HttpResponse(
+                status_code=200,
+                text="%PDF-1.7 the adjustment is 4 per cent",
+                url="https://gov.example/press/real.pdf",
+                headers={"content-type": "application/pdf"},
+            ),
+        ]
+    )
+    provider = OpenAIWebSearchProvider(http=http, api_key="test-key")
+
+    passages = await provider.search("claim", limit=6)
+
+    assert len(passages) == 1
+    assert passages[0].provenance_verified is False
+
+
+# --------------------------------------------- MAJOR M9: web-search call accounting
+
+
+async def test_websearch_stats_counts_only_calls_that_actually_query() -> None:
+    """The exposed counter is what a per-run cost report is built on.
+
+    It must count every request that actually reached the network — mirroring
+    what ``retrieve.py``'s ClaimReview short-circuit predicts for a run: a
+    claim resolved by a fact-check hit never calls this provider's ``search``
+    at all, so it must never be counted here either. This module cannot see
+    that short-circuit (it lives in ``retrieve.py``, which this module does
+    not own) — what it must guarantee is that its own short-circuits (an empty
+    claim, a limit of zero) are equally invisible to the counter, since both
+    mean "no request was ever going to be sent".
+    """
+    http = RecordedHttpClient(
+        [
+            responses_payload(results=[], citations=["https://gov.example/press/x"]),
+            responses_payload(results=[], citations=["https://gov.example/press/y"]),
+            responses_payload(results=[], citations=["https://gov.example/press/z"]),
+        ]
+    )
+    provider = OpenAIWebSearchProvider(http=http, api_key="test-key")
+
+    assert provider.stats.calls == 0
+
+    assert await provider.search("", limit=6) == []
+    assert await provider.search("a claim", limit=0) == []
+    assert provider.stats.calls == 0, "an unsent request must not be counted"
+
+    await provider.search("claim one", limit=6)
+    await provider.search("claim two", limit=6)
+    await provider.search("claim three", limit=6)
+
+    assert provider.stats.calls == 3
+    assert len(http.requests) == 3
+
+
+async def test_websearch_stats_counts_a_call_even_when_it_is_rejected() -> None:
+    """A 429 is still a call OpenAI billed; the counter must not under-report it."""
+    http = RecordedHttpClient([HttpResponse(status_code=429, text="{}", url=RESPONSES_ENDPOINT)])
+    provider = OpenAIWebSearchProvider(http=http, api_key="test-key")
+
+    assert await provider.search("claim", limit=6) == []
+
+    assert provider.stats.calls == 1
 
 
 # ---------------------------------------------------------------- official data

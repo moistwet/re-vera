@@ -38,15 +38,15 @@ export interface CheckRequest {
    */
   url: string;
   /**
-   * Article headline as extracted from the page.
+   * Article headline as extracted from the page. Bounded well above any real headline; a longer string is rejected with 422 rather than stored or hashed.
    */
   title: string;
   /**
-   * Full extracted article body as plain text. Claim.start and Claim.end are character offsets into this string.
+   * Full extracted article body as plain text. Claim.start and Claim.end are character offsets into this string. Bounded to comfortably clear even a long feature or liveblog (60,000 characters is ~5x settings.max_article_chars, which truncates to 12,000 before extraction) while keeping an unauthenticated POST body — and the Redis cache entry built from it — bounded in size.
    */
   text: string;
   /**
-   * Anonymous per-install UUID from chrome.storage.local. Used only for the daily cap.
+   * Anonymous per-install UUID from chrome.storage.local (crypto.randomUUID(), 36 characters). Used only for the daily cap and folded into a Redis key, so it is bounded well above a UUID's length rather than to it exactly, in case the format ever changes shape.
    */
   install_id: string;
 }

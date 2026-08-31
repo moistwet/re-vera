@@ -207,6 +207,10 @@ def _passage_from_review(review: Any, *, claim_text: str, claimant: str) -> Pass
         wire=False,
         origin="factcheck",
         rating=rating,
+        # Built entirely from the ClaimReview API's own structured fields
+        # (rating, publisher, review text) — never fetched-and-guessed — so
+        # this passage's text is verified by construction.
+        provenance_verified=True,
     )
 
 

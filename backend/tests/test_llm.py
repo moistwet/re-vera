@@ -35,6 +35,7 @@ their own because this task owns this test module; a later split into
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import re
 from pathlib import Path
@@ -279,6 +280,92 @@ def test_strict_schema_strips_the_unsupported_keywords() -> None:
 
     for keyword in ("minLength", "minimum", "maximum", "default"):
         assert keyword not in rendered
+
+
+class _WithADeliberateFieldHint(BaseModel):
+    """This class docstring is exactly the kind of internal design commentary
+    every real schema in this codebase carries — multi-paragraph prose aimed at
+    the next engineer, not at the model. It exists here only so the test below
+    has bloat to strip; it is not model guidance and must never reach the wire.
+    """
+
+    quote: str = Field(description="the exact substring relied on")
+
+
+def test_strict_schema_strips_class_docstrings_from_every_object_node() -> None:
+    """M26: a class's docstring must never be billed as prompt tokens.
+
+    ``pydantic`` copies the whole docstring of ``Constrained`` and of the nested
+    ``Nested`` model into ``description`` at the root and inside ``$defs`` —
+    real prose written for engineers, not the model, and multiplied by every
+    extraction/stance/judge call the pipeline ever makes. Before this fix
+    :func:`strict_json_schema` passed both straight through; this asserts
+    neither survives, at any depth.
+    """
+    rendered = json.dumps(strict_json_schema(Constrained))
+
+    assert '"description"' not in rendered, (
+        "a class-level docstring leaked into the schema sent to the provider"
+    )
+    # The docstrings this schema would have leaked, as a belt-and-braces check
+    # that the assertion above is not passing for an unrelated reason.
+    assert "strict structured-output mode is assumed to refuse" not in rendered
+    assert "nested object, so the strict rules are checked" not in rendered
+
+
+def test_strict_schema_keeps_a_deliberate_field_level_description() -> None:
+    """The fix is narrower than "strip every description".
+
+    A field's own ``Field(description=...)`` — genuine, short, deliberate model
+    guidance, as opposed to a class docstring — is not touched. No stage in this
+    codebase uses one today, but the fix must not foreclose a future one that
+    does.
+    """
+    schema = strict_json_schema(_WithADeliberateFieldHint)
+
+    assert schema["properties"]["quote"]["description"] == "the exact substring relied on"
+
+
+def test_strict_schema_is_meaningfully_smaller_with_docstrings_stripped() -> None:
+    """The measured cost win, not just a boolean: strict schemas actually sent
+    to the provider are meaningfully smaller once class-level docstrings are
+    gone — on the real production schemas (``ExtractionResponse``,
+    ``JudgeResponse``, ``StanceResponse``) this fix cuts the strict schema from
+    3990 to 1580 bytes total, a 60% reduction. Guards against the fix silently
+    regressing to a no-op that still passes the presence/absence assertions
+    above."""
+    before = len(json.dumps(_strictify_without_docstring_stripping(Constrained)))
+    after = len(json.dumps(strict_json_schema(Constrained)))
+
+    assert after < before
+    assert after <= before * 0.8
+
+
+def _strictify_without_docstring_stripping(model: type[BaseModel]) -> dict[str, Any]:
+    """Reimplements the pre-fix :func:`strict_json_schema` (constraint keywords
+    stripped, ``additionalProperties``/``required`` applied — but no
+    ``description`` stripping) so the size comparison above is against what this
+    codebase actually sent on every call before M26, not against the untouched
+    ``model_json_schema()`` output (which is a different, unrelated shape)."""
+    unsupported = {
+        "default", "examples", "exclusiveMaximum", "exclusiveMinimum", "format",
+        "maxItems", "maxLength", "maximum", "minItems", "minLength", "minimum",
+        "multipleOf", "pattern", "uniqueItems",
+    }
+
+    def strictify(node: object) -> Any:
+        if isinstance(node, list):
+            return [strictify(item) for item in node]
+        if not isinstance(node, dict):
+            return node
+        result = {k: strictify(v) for k, v in node.items() if k not in unsupported}
+        properties = result.get("properties")
+        if result.get("type") == "object" and isinstance(properties, dict):
+            result["additionalProperties"] = False
+            result["required"] = list(properties)
+        return result
+
+    return strictify(model.model_json_schema())
 
 
 async def test_a_constraint_stripped_from_the_schema_is_still_enforced() -> None:

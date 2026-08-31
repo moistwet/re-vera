@@ -54,12 +54,14 @@ from app.pipeline.judge import (
     build_user_content,
     judge_claim,
     source_label,
+    verified_span,
 )
 from app.pipeline.types import (
     ExtractedClaim,
     Judgement,
     Passage,
     ScoredPassage,
+    normalize_for_match,
     span_occurs_in,
 )
 from app.schema_models import Stance
@@ -327,6 +329,131 @@ async def test_a_span_too_short_to_be_a_citation_is_rejected() -> None:
     is_downgraded(judgement, answer("trivial_span"))
 
 
+async def test_a_whitespace_padded_span_is_measured_after_normalising() -> None:
+    """The floor is on the normalised string, not the raw one.
+
+    ``"40    per    cent"`` is seventeen raw characters — clears
+    ``MIN_CITED_SPAN_CHARS`` if the floor is (wrongly) measured on the string as
+    typed — and collapses to eleven, ``"40 per cent"``, the instant whitespace
+    runs fold to one space for matching. Eleven characters is exactly the same
+    kind of generic fragment ``test_a_span_too_short_to_be_a_citation_is_rejected``
+    already refuses at ten. Measuring the floor on the raw string would let this
+    span buy its way past the check purely by padding, then match almost any
+    passage that happens to contain the two words it is really made of; this is
+    the regression test for that hole.
+    """
+    span = answer("whitespace_padded_span").cited_spans[0]
+    texts = [item.passage.text for item in case()[1]]
+    assert len(span) >= MIN_CITED_SPAN_CHARS, "the raw span alone clears the floor"
+    assert len(normalize_for_match(span)) < MIN_CITED_SPAN_CHARS, "normalised, it does not"
+    assert span_occurs_in(span, texts), "and it is a real substring once normalised"
+
+    judgement = await judge("whitespace_padded_span")
+
+    is_downgraded(judgement, answer("whitespace_padded_span"))
+
+
+async def test_an_empty_cited_spans_list_never_verifies_a_decided_verdict() -> None:
+    """The floor and the occurrence check both vacuously "pass" an empty list —
+    ``all(... for span in [])`` is ``True`` of anything — so the guard against
+    that has to live where the list's *emptiness* is the question, not in the
+    per-span check. ``no_spans.json`` (see
+    :func:`test_a_decided_verdict_that_cites_nothing_downgrades`) is the
+    fixture-driven version of this; this one pins the property directly against
+    the two functions the length-and-presence check actually runs through, so a
+    change that made either one accept ``[]`` as "all verified" would fail here
+    even if the higher-level test's evidence sentence happened to look right for
+    the wrong reason.
+    """
+    texts = [item.passage.text for item in case()[1]]
+    assert verified_span("", texts) is None, "an empty span is never a citation"
+
+    judgement = await judge("no_spans")
+
+    assert judgement.verdict == UNVERIFIABLE
+    assert judgement.cited_spans == []
+
+
+async def test_a_single_character_span_is_rejected_even_though_it_occurs() -> None:
+    """The shortest possible "citation" clears no floor at all, however real it is.
+
+    ``"4"`` really is a substring of passage 1 — of nearly every passage ever
+    published — and citing it establishes nothing about what that passage says.
+    """
+    texts = [item.passage.text for item in case()[1]]
+    assert span_occurs_in("4", texts), "the character really does occur"
+
+    assert verified_span("4", texts) is None
+
+
+async def test_a_span_only_present_in_a_passage_the_judge_was_not_shown_is_rejected() -> None:
+    """A span real *somewhere on the record* is not a citation of *this* record.
+
+    Passage 1 of the fixture really does contain this sentence — but the judge
+    here is shown only passages 2 and 3, and a citation is only as good as the
+    passages it was actually given. Verification must check against exactly
+    those, never a wider pool the model happened to have seen for a different
+    claim or a different call.
+    """
+    claim, scored = case()
+    span = "the median stall rent adjustment at 4 per cent from 1 January"
+    assert span_occurs_in(span, scored[0].passage.text), "genuinely in passage 1"
+    narrowed = scored[1:]
+    narrowed_texts = [item.passage.text for item in narrowed]
+    assert not span_occurs_in(span, narrowed_texts), "but not in what the judge is shown here"
+
+    client, _ = make_client(
+        [
+            LLMResponse(
+                content=json.dumps(
+                    {
+                        "verdict": "contradicted",
+                        "confidence": "high",
+                        "evidence": "The board's release puts the figure at 4 per cent.",
+                        "cited_spans": [span],
+                    }
+                ),
+                prompt_tokens=10,
+                completion_tokens=10,
+            )
+        ]
+    )
+
+    judgement = await judge_claim(claim, narrowed, client=client, settings=judge_settings())
+
+    assert judgement.verdict == UNVERIFIABLE
+    assert judgement.confidence is None
+    assert judgement.cited_spans == []
+
+
+async def test_a_unicode_lookalike_does_not_match_the_real_span() -> None:
+    """A confusable character from a different script is not the same character.
+
+    Swapping the Latin ``a``/``e`` in a genuine span for their Cyrillic
+    lookalikes (U+0430, U+0435) changes not one visible glyph and every
+    underlying codepoint. :func:`~app.pipeline.types.normalize_for_match` folds
+    typography a model changes when it retypes prose — curly quotes, dashes,
+    whitespace — and nothing that would let a different script pass as the one
+    the passage actually used.
+    """
+    # Written as escapes, not as the characters themselves, for the same reason
+    # app.pipeline.types._TYPOGRAPHY is: a test whose whole subject is
+    # confusable characters is the one place where having them literally in the
+    # source is a liability, not a kindness.
+    cyrillic_a = "\u0430"  # CYRILLIC SMALL LETTER A
+    cyrillic_e = "\u0435"  # CYRILLIC SMALL LETTER IE
+
+    texts = [item.passage.text for item in case()[1]]
+    genuine = "the median stall rent adjustment at 4 per cent"
+    assert span_occurs_in(genuine, texts)
+
+    lookalike = genuine.replace("a", cyrillic_a).replace("e", cyrillic_e)
+    assert lookalike != genuine
+    assert len(lookalike) == len(genuine), "same length, different script — not a length trick"
+    assert not span_occurs_in(lookalike, texts)
+    assert verified_span(lookalike, texts) is None
+
+
 async def test_a_quote_retyped_with_different_typography_is_accepted() -> None:
     """The other direction, and the one that makes the check usable.
 
@@ -488,6 +615,7 @@ RECORDINGS = [
     "mixed_spans",
     "stitched_span",
     "trivial_span",
+    "whitespace_padded_span",
     "unknown_verdict",
     "bad_confidence",
     "no_spans",

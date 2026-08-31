@@ -23,13 +23,22 @@ score costs one passage's worth of evidence; a mis-aligned one would cost a
 reader the truth.
 
 **Fabrication.** ``rationale_quote`` is the span of the passage the model says it
-relied on, and it is checked against that passage with
-:func:`~app.pipeline.types.span_occurs_in` before it is believed. A quote that is
-not there — invented, half-remembered, or lifted from a *different* passage — is
-discarded and the passage is forced to ``neutral``. The direction of that failure
-is deliberate: an unverifiable claim of support is no support at all, and the one
-thing this stage must never do is manufacture evidence for a verdict a reader
-will act on.
+relied on, and it is checked with :func:`verified_span` before it is believed:
+long enough, after normalising, to be a citation of something rather than a
+fragment that occurs in everything, and actually present in that passage. A
+quote that fails either test — invented, half-remembered, too short to mean
+anything, or lifted from a *different* passage — is discarded and the passage is
+forced to ``neutral``. The direction of that failure is deliberate: an
+unverifiable claim of support is no support at all, and the one thing this stage
+must never do is manufacture evidence for a verdict a reader will act on. This
+matters beyond this stage: stance labels are exactly what stage 5's rules count
+when deciding "two or more independent supporting sources", so a one-character
+quote here is not a cosmetic bug — it is a fabricated vote in an aggregation
+rule.
+
+:func:`verified_span` and :data:`MIN_CITED_SPAN_CHARS` live here, and
+:mod:`app.pipeline.judge` imports both rather than reimplementing them, so the
+two stages' citation checks cannot quietly drift apart.
 
 Untrusted input
 ---------------
@@ -69,7 +78,13 @@ from pydantic import BaseModel
 from app.config import Settings
 from app.llm import LLMClient, LLMInvalidOutput, load_prompt
 from app.pipeline.providers.base import MAX_PASSAGE_CHARS
-from app.pipeline.types import ExtractedClaim, Passage, ScoredPassage, span_occurs_in
+from app.pipeline.types import (
+    ExtractedClaim,
+    Passage,
+    ScoredPassage,
+    normalize_for_match,
+    span_occurs_in,
+)
 from app.schema_models import Stance
 
 logger = logging.getLogger(__name__)
@@ -77,12 +92,14 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "CLAIM_CLOSE",
     "CLAIM_OPEN",
+    "MIN_CITED_SPAN_CHARS",
     "PASSAGE_CLOSE",
     "PROMPT_NAME",
     "StanceResponse",
     "build_user_content",
     "passage_open",
     "score_passages",
+    "verified_span",
 ]
 
 PROMPT_NAME = "stance"
@@ -101,6 +118,57 @@ the first. The layers that hold are the prompt's instruction to treat all of thi
 as data, the client's separation of roles, and the verification below, none of
 which depend on the markers surviving.
 """
+
+MIN_CITED_SPAN_CHARS = 12
+"""Shortest ``rationale_quote`` that counts as a citation.
+
+The same number as ``extract.MIN_QUOTE_CHARS`` and ``judge.MIN_CITED_SPAN_CHARS``
+(:mod:`app.pipeline.judge` imports this constant rather than defining its own),
+for the same reason: a quote short enough occurs in nearly every passage ever
+published, and "citing" one proves nothing about what a passage actually says.
+Costs the same thing it costs there — a genuine, meaningful short quote
+(``4 per cent``, ten characters) is rejected and the passage falls to
+``neutral`` rather than the stance it actually holds. That is the cheap
+direction: a passage read as neutral when it was not is one piece of evidence
+quietly dropped, and stage 5 abstains rather than overclaims. A passage read as
+``supports`` on a fragment it does not actually establish is a vote in stage
+5's "two or more independent sources" rule that nobody could check.
+"""
+
+
+def verified_span(raw: str, haystacks: str | list[str]) -> str | None:
+    """The trimmed, verified form of ``raw``, or ``None`` if it is not a real citation.
+
+    The one substance-and-presence check both stance and the judge run before
+    believing a model's claim to have quoted something (:mod:`app.pipeline.judge`
+    imports this rather than reimplementing it, so the two checks cannot drift
+    apart): ``raw`` is stripped, and rejected outright if what remains, *after*
+    :func:`~app.pipeline.types.normalize_for_match`, is shorter than
+    :data:`MIN_CITED_SPAN_CHARS`.
+
+    The floor is measured on the **normalised** string on purpose — the same one
+    :func:`~app.pipeline.types.span_occurs_in` matches against below — and not on
+    the raw one. Measuring it on the raw string lets whitespace buy length that
+    normalisation immediately erases: a two-word fragment padded with blank
+    lines or repeated spaces clears a twelve-*character* raw floor easily, and
+    the moment those whitespace runs are folded to single spaces for matching it
+    is a two-word fragment again — the same as if it had never been padded, and
+    two words occur in nearly every passage ever published. A span that survives
+    the floor still has to be found, with :func:`~app.pipeline.types.span_occurs_in`,
+    in ``haystacks`` — the passage (or passages) the caller actually showed the
+    model, never anything wider.
+
+    Returns the *stripped* ``raw`` string, not the matching text cut out of a
+    passage: matching is forgiving about typography and the two differ only in
+    those ways, so keeping the model's own wording means every later check sees
+    the same string that passed this one.
+    """
+    span = raw.strip()
+    if len(normalize_for_match(span)) < MIN_CITED_SPAN_CHARS:
+        return None
+    if not span_occurs_in(span, haystacks):
+        return None
+    return span
 
 
 class _Score(BaseModel):
@@ -285,10 +353,13 @@ def _resolve(
 ) -> ScoredPassage:
     """Turn one passage and its (possible) score into a :class:`ScoredPassage`.
 
-    Three ways to end at ``neutral``, and only one way not to:
+    Four ways to end at ``neutral``, and only one way not to:
 
     * nobody scored this passage — the answer was short, or its index was
       dropped by :func:`_by_index`;
+    * the quote is too short to be a citation once normalised — a fragment that
+      length alone makes meaningless, however confidently it was scored
+      (:data:`MIN_CITED_SPAN_CHARS`, checked by :func:`verified_span`);
     * the quote is empty, or is not in ``shown`` — including a quote copied from
       a *different* passage, which :func:`~app.pipeline.types.span_occurs_in`
       rejects because it is only ever shown this one;
@@ -314,20 +385,35 @@ def _resolve(
         return _neutral(passage)
 
     quote = score.quote.strip()
-    if not span_occurs_in(quote, shown):
+    verified = verified_span(quote, shown)
+    if verified is None:
         # Never log the quote itself: it is either passage text or something the
-        # model invented, and neither belongs in a log line.
-        logger.warning(
-            "stance: claim=%s passage %d was scored %s on a quote that is not in it "
-            "(%d chars); forcing neutral",
-            claim_id,
-            number,
-            score.stance.value,
-            len(quote),
-        )
+        # model invented, and neither belongs in a log line. The two reasons
+        # share one check (:func:`verified_span`) but get different messages —
+        # a length-normalising computation for the message, not a second
+        # matching implementation — because "too short to be a citation" and
+        # "not in the passage at all" are different facts about a prompt.
+        if len(normalize_for_match(quote)) < MIN_CITED_SPAN_CHARS:
+            logger.warning(
+                "stance: claim=%s passage %d was scored %s on a quote that normalises to "
+                "fewer than %d characters, under the citation floor; forcing neutral",
+                claim_id,
+                number,
+                score.stance.value,
+                MIN_CITED_SPAN_CHARS,
+            )
+        else:
+            logger.warning(
+                "stance: claim=%s passage %d was scored %s on a quote that is not in it "
+                "(%d chars); forcing neutral",
+                claim_id,
+                number,
+                score.stance.value,
+                len(quote),
+            )
         return _neutral(passage)
 
-    return ScoredPassage(passage=passage, stance=score.stance, rationale_quote=quote)
+    return ScoredPassage(passage=passage, stance=score.stance, rationale_quote=verified)
 
 
 def _neutral(passage: Passage) -> ScoredPassage:

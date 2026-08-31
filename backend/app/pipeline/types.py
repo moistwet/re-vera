@@ -127,6 +127,27 @@ class Passage:
     words, e.g. "False") and is set only when ``origin == "factcheck"``. It is
     never shown to a reader as a verdict: Re-Vera has four verdicts and
     "False" is not one of them.
+
+    ``provenance_verified`` is ``True`` only when ``text`` is known to actually
+    appear on the page at ``url``, rather than being a model's summary of it.
+    A passage built from structured data an API returned as fact (ClaimReview,
+    an official dataset) or from bytes fetched directly from ``url``
+    (``cited_source``) is verified *by construction* — the text is either the
+    provider's own structured field or a substring of the page it names, and
+    the provider that builds it is responsible for that being true. A passage
+    whose ``text`` is a model's free-form summary of a page it read (the MVP's
+    web-search provider) is **not** verified merely because it carries a URL:
+    the model can misquote or invent, and nothing has checked its words against
+    the page.
+
+    Defaults to ``False`` so that a provider which forgets to set this field —
+    today's or a future one — produces an *unverified* passage rather than a
+    silently-trusted one. Setting it ``True`` is an affirmative claim a
+    provider makes about its own output; getting it wrong in the trusting
+    direction is the failure this field exists to make hard to reach by
+    accident. This field does not itself gate anything: it is metadata for
+    whichever stage chooses to require it (aggregation, per the finding that
+    added this field) — :mod:`app.pipeline.types` only carries the bit.
     """
 
     text: str
@@ -136,6 +157,7 @@ class Passage:
     wire: bool
     origin: PassageOrigin
     rating: str | None
+    provenance_verified: bool = False
 
 
 @dataclass(frozen=True, slots=True)

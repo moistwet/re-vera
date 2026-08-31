@@ -16,25 +16,36 @@ instead of hanging the suite.
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import json
 from collections.abc import Callable
 from datetime import datetime
 from itertools import pairwise
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 import pytest
 from fakeredis.aioredis import FakeRedis
 from fastapi import FastAPI
 
+import app.main as main_module
 import app.routes.check as check_route
 from app.cache import cache_key, get_check, set_check
 from app.config import Settings
 from app.events import mark_job_started
 from app.invariants import validate_claims
 from app.limits import CAP_KEY, singapore_today
-from app.pipeline.mock import RESOLVE_ORDER, load_fixture_claims, tally
-from app.schema_models import Claim, ClaimsFoundEvent, DoneEvent, ErrorEvent
+from app.pipeline.mock import (
+    MOCK_CACHE_SOURCE,
+    RESOLVE_ORDER,
+    load_fixture_claims,
+    run_mock_pipeline,
+    tally,
+)
+from app.pipeline.providers.base import HttpResponse, RecordedHttpClient
+from app.pipeline.providers.cited import LinkedCitationProvider, _is_safe_to_fetch
+from app.schema_models import CheckRequest, Claim, ClaimsFoundEvent, DoneEvent, ErrorEvent
 
 from .conftest import TEST_DAILY_CAP, TEST_MAX_CLAIMS, build_settings
 
@@ -461,10 +472,137 @@ async def test_a_poisoned_cache_entry_is_removed_and_replaced(
     )
 
 
+# --------------------------------------- M25: the mock must not poison the cache
+
+
+async def test_run_mock_pipeline_tags_the_cache_entry_it_writes(
+    fake_redis: FakeRedis, check_request_body: dict[str, str], settings: Settings
+) -> None:
+    """The write side of the fix: every entry the mock produces is marked.
+
+    Without this tag nothing about a cache entry says which pipeline wrote it —
+    which is exactly how a demo run against a real article's URL could poison
+    that URL's cache for seven days with invented verdicts.
+    """
+    url = check_request_body["url"]
+    await run_mock_pipeline(
+        fake_redis, "job-1", CheckRequest.model_validate(check_request_body), settings=settings
+    )
+
+    entry = await get_check(fake_redis, url)
+    assert entry is not None
+    assert entry["source"] == MOCK_CACHE_SOURCE
+
+
+async def test_a_mock_tagged_entry_never_answers_a_real_pipeline_request(
+    make_app: Callable[[Settings], FastAPI],
+    fake_redis: FakeRedis,
+    check_request_body: dict[str, str],
+    fixture_claims: list[dict[str, Any]],
+) -> None:
+    """The read side, exercised through the real endpoint.
+
+    A ``USE_MOCK_PIPELINE=true`` demo run wrote these six fictional claims
+    under this URL (simulated directly here, the way ``seed_poisoned_cache``
+    simulates a bad build elsewhere in this file). A *real* reader's request
+    for the same URL — ``use_mock_pipeline=False`` — must **not** be told
+    ``cached: true`` and served the fixture's invented verdicts: before this
+    fix, a mock-tagged entry was indistinguishable from a real one and would
+    have been replayed for up to seven days.
+    """
+    url = check_request_body["url"]
+    await set_check(
+        fake_redis,
+        url,
+        {
+            "claims": fixture_claims,
+            "counts": EXPECTED_COUNTS,
+            "checked_at": "2026-08-24T00:00:00Z",
+            "source": MOCK_CACHE_SOURCE,
+        },
+    )
+
+    real_app = make_app(
+        build_settings(
+            daily_cap=TEST_DAILY_CAP,
+            max_claims=TEST_MAX_CLAIMS,
+            use_mock_pipeline=False,
+        )
+    )
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=real_app), base_url="http://testserver"
+    ) as real_client:
+        response = (await real_client.post("/check", json=check_request_body)).json()
+
+    assert response["cached"] is False, (
+        "a real reader must never be told a mock-pipeline entry is a cache hit"
+    )
+    # The poisoned entry is gone the moment the endpoint returns — the deletion
+    # happens synchronously inside `usable_cache_entry`, awaited before the
+    # (real, keyless, doomed-to-fail-safely) pipeline is even spawned.
+    assert await get_check(fake_redis, url) is None
+
+
+async def test_a_mock_tagged_entry_still_answers_another_mock_request(
+    client: httpx.AsyncClient,
+    fake_redis: FakeRedis,
+    check_request_body: dict[str, str],
+    fixture_claims: list[dict[str, Any]],
+) -> None:
+    """The fix is one-directional: a mock entry still serves a mock request.
+
+    ``client`` (from ``conftest.py``) runs with ``use_mock_pipeline=True`` — a
+    second dev/demo run hitting its own cached fixture claims is normal replay,
+    not the poisoning this fix closes, and must keep working.
+    """
+    url = check_request_body["url"]
+    await set_check(
+        fake_redis,
+        url,
+        {
+            "claims": fixture_claims,
+            "counts": EXPECTED_COUNTS,
+            "checked_at": "2026-08-24T00:00:00Z",
+            "source": MOCK_CACHE_SOURCE,
+        },
+    )
+
+    response = (await client.post("/check", json=check_request_body)).json()
+
+    assert response["cached"] is True
+    assert response["claim_count"] == EXPECTED_CLAIM_COUNT
+    assert await get_check(fake_redis, url) is not None
+
+
+async def test_usable_cache_entry_refuses_a_mock_tag_for_a_real_request(
+    fake_redis: FakeRedis,
+    check_request_body: dict[str, str],
+    fixture_claims: list[dict[str, Any]],
+) -> None:
+    """The helper directly, mirroring the invariant-poison tests above: a
+    mock-tagged entry is deleted, not merely skipped, when the caller is not
+    itself running the mock — the same self-healing the invariant guard gets."""
+    url = check_request_body["url"]
+    entry = {
+        "claims": fixture_claims,
+        "counts": EXPECTED_COUNTS,
+        "checked_at": "2026-08-24T00:00:00Z",
+        "source": MOCK_CACHE_SOURCE,
+    }
+    await set_check(fake_redis, url, entry)
+    real_settings = build_settings(
+        daily_cap=TEST_DAILY_CAP, max_claims=TEST_MAX_CLAIMS, use_mock_pipeline=False
+    )
+
+    assert await check_route.usable_cache_entry(fake_redis, url, settings=real_settings) is None
+    assert await get_check(fake_redis, url) is None
+
+
 async def test_usable_cache_entry_deletes_the_key_it_rejects(
     fake_redis: FakeRedis,
     check_request_body: dict[str, str],
     fixture_claims: list[dict[str, Any]],
+    settings: Settings,
 ) -> None:
     """The helper itself: a breach returns None *and* clears the key.
 
@@ -477,7 +615,7 @@ async def test_usable_cache_entry_deletes_the_key_it_rejects(
     url = check_request_body["url"]
     await seed_poisoned_cache(fake_redis, url, fixture_claims)
 
-    assert await check_route.usable_cache_entry(fake_redis, url) is None
+    assert await check_route.usable_cache_entry(fake_redis, url, settings=settings) is None
     assert await fake_redis.get(cache_key(url)) is None
     assert await get_check(fake_redis, url) is None
 
@@ -486,6 +624,7 @@ async def test_usable_cache_entry_keeps_a_healthy_entry(
     fake_redis: FakeRedis,
     check_request_body: dict[str, str],
     fixture_claims: list[dict[str, Any]],
+    settings: Settings,
 ) -> None:
     """The other half: a legal entry is returned untouched, key and all.
 
@@ -500,15 +639,20 @@ async def test_usable_cache_entry_keeps_a_healthy_entry(
     }
     await set_check(fake_redis, url, entry)
 
-    assert await check_route.usable_cache_entry(fake_redis, url) == entry
+    assert await check_route.usable_cache_entry(fake_redis, url, settings=settings) == entry
     assert await fake_redis.get(cache_key(url)) is not None
 
 
 async def test_an_unknown_url_is_still_a_plain_miss(
-    fake_redis: FakeRedis, check_request_body: dict[str, str]
+    fake_redis: FakeRedis, check_request_body: dict[str, str], settings: Settings
 ) -> None:
     """No entry at all is None, with nothing to delete."""
-    assert await check_route.usable_cache_entry(fake_redis, check_request_body["url"]) is None
+    assert (
+        await check_route.usable_cache_entry(
+            fake_redis, check_request_body["url"], settings=settings
+        )
+        is None
+    )
 
 
 # ------------------------------------------------------------- the daily limit
@@ -615,6 +759,195 @@ async def test_a_malformed_request_is_rejected(client: httpx.AsyncClient) -> Non
     """A body that is not a ``CheckRequest`` never reaches the pipeline."""
     response = await client.post("/check", json={"url": "not a url", "title": "t"})
     assert response.status_code == 422
+
+
+# ------------------------------------------------- M11: the cache-hit burst bound
+
+
+async def test_a_handful_of_legitimate_replays_are_never_rate_limited(
+    client: httpx.AsyncClient, check_request_body: dict[str, str]
+) -> None:
+    """The default budget must not punish an ordinary reader re-opening the
+    popup, or a small class re-reading the same article — only a flood."""
+    first = (await client.post("/check", json=check_request_body)).json()
+    await read_stream(client, first["job_id"])
+
+    for _ in range(20):
+        response = await client.post("/check", json=check_request_body)
+        assert response.status_code == 200
+        assert response.json()["cached"] is True
+
+
+async def test_a_cache_hit_burst_past_the_budget_is_rate_limited(
+    client: httpx.AsyncClient,
+    check_request_body: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """M11: replaying one cached URL faster than the budget is refused with a
+    429 distinct from the daily-cap one, so a client can tell the two apart."""
+    monkeypatch.setattr(check_route, "CACHE_HIT_BURST_LIMIT", 3)
+    first = (await client.post("/check", json=check_request_body)).json()
+    await read_stream(client, first["job_id"])
+
+    for _ in range(3):
+        response = await client.post("/check", json=check_request_body)
+        assert response.status_code == 200
+
+    limited = await client.post("/check", json=check_request_body)
+    assert limited.status_code == 429
+    payload = error_payload(limited)
+    assert payload["code"] == "rate_limited"
+    assert payload["code"] != "daily_limit"
+    message = payload["message"]
+    assert isinstance(message, str) and message.strip()
+    assert "flagged" not in message.lower()
+
+
+async def test_the_cache_hit_burst_is_scoped_per_url(
+    client: httpx.AsyncClient,
+    check_request_body: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Exhausting one URL's budget must not touch a different URL's."""
+    monkeypatch.setattr(check_route, "CACHE_HIT_BURST_LIMIT", 1)
+    first = (await client.post("/check", json=check_request_body)).json()
+    await read_stream(client, first["job_id"])
+    assert (await client.post("/check", json=check_request_body)).status_code == 200
+    assert (await client.post("/check", json=check_request_body)).status_code == 429
+
+    other_body = {**check_request_body, "url": other_url(1)}
+    other_first = (await client.post("/check", json=other_body)).json()
+    await read_stream(client, other_first["job_id"])
+    assert (await client.post("/check", json=other_body)).status_code == 200
+
+
+async def test_cache_hit_burst_helper_resets_after_its_window(
+    fake_redis: FakeRedis, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The window-scoping directly: a fresh window forgets the old count."""
+    monkeypatch.setattr(check_route, "CACHE_HIT_BURST_LIMIT", 1)
+    monkeypatch.setattr(check_route, "CACHE_HIT_BURST_WINDOW_SECONDS", 1)
+    url = "https://www.channelnewsasia.com/singapore/burst-reset-story"
+
+    assert await check_route._cache_hit_within_budget(fake_redis, url) is True
+    assert await check_route._cache_hit_within_budget(fake_redis, url) is False
+
+    await asyncio.sleep(1.1)
+
+    assert await check_route._cache_hit_within_budget(fake_redis, url) is True
+
+
+# --------------------------------------------------- M13: uncached single-flight
+
+
+async def test_concurrent_misses_of_one_url_share_a_single_pipeline_run(
+    app: FastAPI, check_request_body: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two concurrent checks of the same **uncached** URL must run the pipeline
+    exactly once between them, and both requests must be handed a job id that
+    is actually running — a follower streaming that id must see the full
+    result, not just an equal-looking id that goes nowhere.
+    """
+    run_count = 0
+    original = check_route.run_mock_pipeline
+
+    async def counting_pipeline(*args: Any, **kwargs: Any) -> None:
+        nonlocal run_count
+        run_count += 1
+        await original(*args, **kwargs)
+
+    monkeypatch.setattr(check_route, "run_mock_pipeline", counting_pipeline)
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://testserver"
+    ) as client:
+        first_response, second_response = await asyncio.gather(
+            client.post("/check", json=check_request_body),
+            client.post("/check", json=check_request_body),
+        )
+        first, second = first_response.json(), second_response.json()
+
+        assert first["cached"] is False
+        assert second["cached"] is False
+        assert first["job_id"] == second["job_id"], (
+            "a follower must be handed the leader's job id, not start its own run"
+        )
+
+        # The follower's own returned id must genuinely work end to end, not
+        # merely equal the leader's — this is what "waiters do not hang" means.
+        records = await read_stream(client, second["job_id"])
+
+    assert [record["event"] for record in records] == (
+        ["claims_found"] + ["claim"] * EXPECTED_CLAIM_COUNT + ["done"]
+    )
+    assert run_count == 1, "two concurrent misses of one URL must not double-run the pipeline"
+
+
+async def test_a_single_flight_follower_is_still_charged_the_daily_cap(
+    app: FastAPI, fake_redis: FakeRedis, check_request_body: dict[str, str]
+) -> None:
+    """The lock dedupes pipeline *spend*, not each reader's own allowance: a
+    follower riding a shared run still uses one of their twenty checks, so
+    racing your own requests can never buy more checks than the cap allows."""
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://testserver"
+    ) as client:
+        await asyncio.gather(
+            client.post("/check", json=check_request_body),
+            client.post("/check", json=check_request_body),
+        )
+
+    key = CAP_KEY.format(
+        install_id=check_request_body["install_id"], day=singapore_today()
+    )
+    assert await fake_redis.get(key) == "2"
+
+
+async def test_a_different_url_never_joins_an_unrelated_single_flight_run(
+    app: FastAPI, check_request_body: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Single-flight is scoped per URL: a concurrent miss for a *different*
+    article must start its own run, never attach to someone else's."""
+    run_count = 0
+    original = check_route.run_mock_pipeline
+
+    async def counting_pipeline(*args: Any, **kwargs: Any) -> None:
+        nonlocal run_count
+        run_count += 1
+        await original(*args, **kwargs)
+
+    monkeypatch.setattr(check_route, "run_mock_pipeline", counting_pipeline)
+
+    other_body = {**check_request_body, "url": other_url(2)}
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://testserver"
+    ) as client:
+        first_response, second_response = await asyncio.gather(
+            client.post("/check", json=check_request_body),
+            client.post("/check", json=other_body),
+        )
+    first, second = first_response.json(), second_response.json()
+
+    assert first["job_id"] != second["job_id"]
+    assert run_count == 2
+
+
+async def test_the_inflight_lock_is_released_so_the_next_miss_leads_its_own_run(
+    app: FastAPI, fake_redis: FakeRedis, check_request_body: dict[str, str]
+) -> None:
+    """After a leader's run finishes, its lock must not linger for the rest of
+    its TTL — the *next* miss for the same URL (after the result is no longer
+    fresh, e.g. an invariant-poisoned re-check) leads its own run rather than
+    silently joining a job that has already finished."""
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://testserver"
+    ) as client:
+        first = (await client.post("/check", json=check_request_body)).json()
+        await read_stream(client, first["job_id"])
+
+    # The finished run's cache write means a plain repeat is a cache hit, so
+    # exercise the lock directly: nothing should still be holding it.
+    assert await check_route._inflight_leader(fake_redis, check_request_body["url"]) is None
 
 
 # ------------------------------------------------------- the stream lifecycle
@@ -776,6 +1109,63 @@ def test_tally_counts_the_fixture_verdicts() -> None:
     assert set(tally(claims)) == set(EXPECTED_COUNTS)
 
 
+# ------------------------------------------------------ M10: the Redis client
+
+
+class _FakeRedisFromUrl:
+    """Stand-in returned by a patched ``redis.asyncio.from_url``.
+
+    Records every keyword it was built with, so a test can assert on what
+    ``lifespan`` actually asked for, and offers the one method ``lifespan``
+    calls on shutdown.
+    """
+
+    def __init__(self, url: str, **kwargs: Any) -> None:
+        self.url = url
+        self.kwargs = kwargs
+
+    async def aclose(self) -> None:
+        return None
+
+
+async def test_lifespan_gives_the_redis_client_connect_and_socket_timeouts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """M10: an unbounded Redis client can hang forever on any command, in the
+    request path or in a spawned worker — defeating every other timeout in the
+    system, including the SSE stream's own deadline. ``lifespan`` must pass
+    real, positive connect and socket timeouts (and keepalive) to
+    ``redis.asyncio.from_url`` when it builds the app's one shared client.
+
+    Nothing in ``tests/conftest.py`` exercises ``app.main.lifespan`` at all —
+    every other test injects a ``fakeredis`` instance directly and never lets
+    the real lifespan run — so this is the only test in the suite that would
+    have caught a client built with no timeout at all.
+    """
+    captured: dict[str, Any] = {}
+
+    def fake_from_url(url: str, **kwargs: Any) -> _FakeRedisFromUrl:
+        captured["url"] = url
+        captured.update(kwargs)
+        return _FakeRedisFromUrl(url, **kwargs)
+
+    monkeypatch.setattr(main_module.redis_asyncio, "from_url", fake_from_url)
+    app = FastAPI()
+
+    async with main_module.lifespan(app):
+        assert isinstance(app.state.redis, _FakeRedisFromUrl)
+
+    assert captured.get("decode_responses") is True
+    assert captured.get("socket_connect_timeout") == main_module.REDIS_CONNECT_TIMEOUT_SECONDS
+    assert captured.get("socket_timeout") == main_module.REDIS_SOCKET_TIMEOUT_SECONDS
+    # Not just present: a timeout of zero (or a falsy default some caller might
+    # be tempted to leave unset) would mean "block forever" just as surely as
+    # no timeout at all.
+    assert captured["socket_connect_timeout"] > 0
+    assert captured["socket_timeout"] > 0
+    assert captured.get("socket_keepalive") is True
+
+
 def test_tally_reports_zero_for_absent_verdicts() -> None:
     """All four verdicts are always present, zero included — the popup renders a
     counts line, not a sparse map."""
@@ -785,3 +1175,199 @@ def test_tally_reports_zero_for_absent_verdicts() -> None:
         "missing_context": 0,
         "unverifiable": 0,
     }
+
+
+# -------------------------------------------------------- M24: SSRF perimeter
+#
+# ``LinkedCitationProvider`` (``app/pipeline/providers/cited.py``) is the one
+# provider that turns an unauthenticated ``POST /check`` body — the article
+# URL, and then whatever links a fetched page happens to contain — directly
+# into outbound fetches. These tests live here (in the test file this task
+# owns) rather than in ``tests/test_providers.py`` or ``tests/test_retrieve.py``,
+# which this task does not own; they use a fake ``resolve_host`` throughout so
+# nothing here ever performs a real DNS lookup or opens a socket.
+
+
+def _fake_resolver(mapping: dict[str, list[str]]) -> Callable[[str], Any]:
+    """A ``ResolveHost`` that answers only for the hostnames given, ``[]`` for
+    anything else — the offline stand-in for real DNS these tests use so the
+    guard's behaviour is asserted against addresses the test controls.
+
+    A hostname that is itself an IP literal resolves to itself without
+    consulting ``mapping`` at all, mirroring what real ``getaddrinfo`` does for
+    a literal address (verified in development: no DNS round trip, answers
+    instantly) — so a test exercising a raw-IP URL does not also have to spell
+    that address out on both sides.
+    """
+
+    async def resolve(hostname: str) -> list[str]:
+        try:
+            ipaddress.ip_address(hostname)
+        except ValueError:
+            return mapping.get(hostname, [])
+        return [hostname]
+
+    return resolve
+
+
+async def test_is_safe_to_fetch_blocks_the_cloud_metadata_address() -> None:
+    """The literal PoC from the finding: a raw metadata-endpoint IP in the URL."""
+    assert await _is_safe_to_fetch("http://169.254.169.254/", _fake_resolver({})) is False
+
+
+@pytest.mark.parametrize(
+    "url,resolved",
+    [
+        ("http://localhost:6379", ["127.0.0.1"]),
+        ("http://redis.internal/", ["10.0.0.5"]),
+        ("http://intranet.example/", ["192.168.1.1"]),
+        ("http://[::1]:6379/", ["::1"]),
+        ("http://link-local.example/", ["169.254.1.1"]),
+    ],
+)
+async def test_is_safe_to_fetch_blocks_every_private_class(url: str, resolved: list[str]) -> None:
+    """Each private/loopback/link-local class the finding named, blocked explicitly."""
+    host = urlsplit(url).hostname
+    assert host is not None
+    assert await _is_safe_to_fetch(url, _fake_resolver({host: resolved})) is False
+
+
+async def test_is_safe_to_fetch_allows_a_genuinely_public_address() -> None:
+    """The guard is not a blanket refusal — a real news domain still passes."""
+    resolver = _fake_resolver({"news.example": ["93.184.216.34"]})
+    assert await _is_safe_to_fetch("https://news.example/story", resolver) is True
+
+
+async def test_is_safe_to_fetch_refuses_a_non_http_scheme() -> None:
+    """``file://`` and friends never reach the resolver at all."""
+    called = False
+
+    async def resolve(_hostname: str) -> list[str]:
+        nonlocal called
+        called = True
+        return ["93.184.216.34"]
+
+    assert await _is_safe_to_fetch("file:///etc/passwd", resolve) is False
+    assert called is False
+
+
+async def test_linked_citation_provider_refuses_a_private_article_url() -> None:
+    """``article_url`` comes straight from the POST body: a reader (or an
+    attacker) controls it entirely. Before the fix this reached ``self.http.get``
+    unchecked; the guard must refuse it before any request is made."""
+    http = RecordedHttpClient([HttpResponse(status_code=200, text="<html></html>", url="x")])
+    provider = LinkedCitationProvider(
+        http=http, resolve_host=_fake_resolver({"internal-service": ["10.1.2.3"]})
+    )
+
+    passages = await provider.fetch(
+        "the ministry announced a 4% increase",
+        article_url="http://internal-service/report",
+        limit=2,
+    )
+
+    assert passages == []
+    assert http.requests == [], "a blocked URL must never reach the HTTP client at all"
+
+
+async def test_linked_citation_provider_refuses_a_link_that_resolves_privately() -> None:
+    """The article itself is public; a link it contains points at a private
+    host. The guard must catch the *candidate* URL too, not only the article."""
+    article_html = (
+        '<html><body><a href="http://metadata.internal/press/rental-adjustment">'
+        "the ministry's rental adjustment announcement</a></body></html>"
+    )
+    http = RecordedHttpClient(
+        [HttpResponse(status_code=200, text=article_html, url="https://news.example/story")]
+    )
+    provider = LinkedCitationProvider(
+        http=http,
+        resolve_host=_fake_resolver(
+            {"news.example": ["93.184.216.34"], "metadata.internal": ["169.254.169.254"]}
+        ),
+    )
+
+    passages = await provider.fetch(
+        "the ministry's rental adjustment announcement",
+        article_url="https://news.example/story",
+        limit=2,
+    )
+
+    assert passages == []
+    # The article itself was fetched (it is public); the private candidate link
+    # was never requested.
+    assert len(http.requests) == 1
+    assert http.requests[0].url == "https://news.example/story"
+
+
+async def test_linked_citation_provider_discards_a_response_that_redirected_privately() -> None:
+    """Defense in depth for M24's redirect gap: even though this provider
+    cannot see or control the redirect ``self.http`` followed, it must refuse
+    to use a response whose *final* URL resolves to a private address."""
+    article_html = (
+        '<html><body><a href="https://news.example/press/rental-adjustment">'
+        "the ministry's rental adjustment announcement</a></body></html>"
+    )
+    http = RecordedHttpClient(
+        [
+            HttpResponse(status_code=200, text=article_html, url="https://news.example/story"),
+            # The candidate request "succeeds", but HttpxClient followed a
+            # redirect the provider never saw — the response lands on a
+            # private host it did not ask for by name.
+            HttpResponse(
+                status_code=200,
+                text=(
+                    "<html><body>the ministry's rental adjustment "
+                    "announcement in full</body></html>"
+                ),
+                url="http://169.254.169.254/latest/meta-data/",
+            ),
+        ]
+    )
+    provider = LinkedCitationProvider(
+        http=http, resolve_host=_fake_resolver({"news.example": ["93.184.216.34"]})
+    )
+
+    passages = await provider.fetch(
+        "the ministry's rental adjustment announcement",
+        article_url="https://news.example/story",
+        limit=2,
+    )
+
+    assert passages == []
+
+
+async def test_linked_citation_provider_still_works_against_an_unresolvable_test_host() -> None:
+    """The documented, deliberate asymmetry: a hostname that fails to resolve
+    at all is not blocked by the guard — the default resolver in production
+    code is real DNS (never exercised in this offline suite), and the fake
+    resolver here answers nothing for ``news.example`` on purpose, exactly as
+    a sandboxed DNS lookup for an RFC 2606 fictional domain would. This proves
+    the fix does not turn the provider into a permanent no-op."""
+    article_html = (
+        '<html><body><a href="https://news.example/press/rental-adjustment">'
+        "the ministry's rental adjustment announcement</a></body></html>"
+    )
+    press_release_html = (
+        "<html><body>the ministry's rental adjustment announcement, in full.</body></html>"
+    )
+    http = RecordedHttpClient(
+        [
+            HttpResponse(status_code=200, text=article_html, url="https://news.example/story"),
+            HttpResponse(
+                status_code=200,
+                text=press_release_html,
+                url="https://news.example/press/rental-adjustment",
+            ),
+        ]
+    )
+    provider = LinkedCitationProvider(http=http, resolve_host=_fake_resolver({}))
+
+    passages = await provider.fetch(
+        "the ministry's rental adjustment announcement",
+        article_url="https://news.example/story",
+        limit=2,
+    )
+
+    assert len(passages) == 1
+    assert passages[0].origin == "cited_source"

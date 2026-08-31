@@ -426,7 +426,7 @@ def test_a_stray_environment_variable_cannot_move_an_offline_number(
 
     assert run_eval.eval_settings(live=False).max_passages_per_claim == 6
     assert main(["--offline", "--no-json"]) == 0
-    assert "abstention rate   0.219" in capsys.readouterr().out
+    assert "abstention rate   0.344" in capsys.readouterr().out
 
     # ...and the variable is genuinely live otherwise, so the pin is load-bearing.
     assert run_eval.Settings().max_passages_per_claim == 1

@@ -91,6 +91,29 @@ FIRST_CLAIM_DELAY_SECONDS = 0.7
 FAILURE_MESSAGE = "Something went wrong while checking this article. Please try again."
 """Reader-facing text for the ``error`` event published on an unexpected failure."""
 
+MOCK_CACHE_SOURCE = "mock_pipeline_fixture"
+"""Tag written onto every cache entry this module produces (M25).
+
+The 7-day URL cache (``app.cache``) is one shared keyspace: nothing about a
+cache key says which pipeline wrote it, and before this tag existed nothing
+distinguished a real result from a demo one. A dev or demo run with
+``USE_MOCK_PIPELINE=true`` writes these six fictional fixture claims to the
+cache keyed by the *reader's real article URL* — so without a tag, a demo run
+against a real article poisons the real cache for up to seven days, and every
+real reader who then checks that same article for real gets the fixture's
+invented verdicts back as if they were about the article they are actually
+reading.
+
+``app.routes.check.usable_cache_entry`` (the one place a cache entry is read
+back before being trusted) checks this tag and refuses an entry carrying it
+when the current request is *not* itself running with the mock pipeline —
+exactly the case above — deleting the poisoned entry so the real pipeline runs
+fresh instead of replaying it. An entry with no tag at all (everything the real
+pipeline has ever written, and everything written before this fix) is
+untouched: absence of the tag has always meant "not mock", so this is additive,
+not a change to any existing cache entry's meaning.
+"""
+
 
 def load_fixture_claims(max_claims: int | None = None) -> list[dict[str, Any]]:
     """Return the fixture's claims, validated against the shared schema.
@@ -218,7 +241,15 @@ async def run_mock_pipeline(
         await set_check(
             redis,
             str(request.url),
-            {"claims": claims, "counts": counts, "checked_at": checked_at},
+            # `source` tags this entry as fixture data (M25) so
+            # `app.routes.check.usable_cache_entry` never lets it answer a
+            # real reader's check of this URL — see MOCK_CACHE_SOURCE.
+            {
+                "claims": claims,
+                "counts": counts,
+                "checked_at": checked_at,
+                "source": MOCK_CACHE_SOURCE,
+            },
         )
         await publish_event(redis, job_id, "done", done_payload(counts, checked_at))
     except asyncio.CancelledError:

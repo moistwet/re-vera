@@ -37,6 +37,7 @@ open for as long as it runs and nothing else would ever close it:
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import time
@@ -55,7 +56,7 @@ from app.config import Settings, get_settings
 from app.events import job_exists, mark_job_started, replay_and_stream
 from app.invariants import ClaimInvariantError, validate_claims
 from app.limits import DailyCapExceeded, check_daily_cap
-from app.pipeline.mock import replay_cached, run_mock_pipeline
+from app.pipeline.mock import MOCK_CACHE_SOURCE, replay_cached, run_mock_pipeline
 from app.pipeline.providers import PROVIDER_TIMEOUT_SECONDS
 from app.pipeline.run import run_pipeline
 from app.schema_models import CheckJob, CheckRequest
@@ -99,6 +100,164 @@ SSE_HEADERS = {
     # exists to avoid.
     "X-Accel-Buffering": "no",
 }
+
+CACHE_HIT_BURST_LIMIT = 120
+"""Most cache-hit replays honoured for one cached URL within
+:data:`CACHE_HIT_BURST_WINDOW_SECONDS` (M11).
+
+A cache hit is deliberately uncapped by the *daily* cap — cost-free reads
+should not ration a reader's twenty checks (``docs/decisions.md`` §10) — but
+"uncapped" is not the same as "unlimited": every hit still allocates a job id,
+a started marker and a full published event stream (:mod:`app.events`), so an
+unauthenticated script that just replays one popular URL as fast as it can is
+free amplification, not a legitimate re-read. This is a coarse circuit
+breaker against exactly that, not a fairness mechanism — the loose, NAT-aware
+per-IP backstop that *is* a fairness mechanism is milestone 5's job
+(``CLAUDE.md``). Twelve replays a second, sustained, is nothing a person
+reading one article does; it is comfortably above what a whole school
+refreshing a trending article at once would produce, and comfortably below
+what a script hammering the endpoint would produce.
+"""
+
+CACHE_HIT_BURST_WINDOW_SECONDS = 10
+"""The fixed window :data:`CACHE_HIT_BURST_LIMIT` is measured over, per URL."""
+
+CACHE_HIT_RATE_LIMITED_MESSAGE = (
+    "This article is being checked a lot right now. Please try again in a few seconds."
+)
+"""Reader-facing sentence for the ``rate_limited`` 429 (M11)."""
+
+_CACHE_HIT_BURST_KEY = "cachehit:{url_hash}"
+"""Redis key for the per-URL cache-hit burst counter. A fixed window (not a
+sliding one): simplicity is fine here, this is a coarse circuit breaker, not a
+precise fairness meter."""
+
+_INFLIGHT_KEY = "inflight:{url_hash}"
+"""Redis key naming the job id currently running the pipeline for one
+uncached URL (M13's single-flight lock). Its value is a ``job_id`` a stream
+can be opened on, never article text or an install id."""
+
+
+def _url_hash(url: str) -> str:
+    """The identity a burst counter or an in-flight lock keys on: a URL's
+    sha256, matching :func:`app.cache.cache_key`'s own hashing so the two
+    namespaces are trivially distinct without either leaking the URL itself
+    into a Redis key name."""
+    return hashlib.sha256(url.encode()).hexdigest()
+
+
+async def _cache_hit_within_budget(redis: Redis, url: str) -> bool:
+    """True unless ``url`` has already been replayed
+    :data:`CACHE_HIT_BURST_LIMIT` times within :data:`CACHE_HIT_BURST_WINDOW_SECONDS`.
+
+    One ``INCR`` (creating the key with its window's ``EXPIRE`` on the first
+    hit of a fresh window) — cheap, and the only new Redis work a cache hit
+    pays for M11.
+    """
+    key = _CACHE_HIT_BURST_KEY.format(url_hash=_url_hash(url))
+    count = await redis.incr(key)
+    if count == 1:
+        await redis.expire(key, CACHE_HIT_BURST_WINDOW_SECONDS)
+    return count <= CACHE_HIT_BURST_LIMIT
+
+
+async def _claim_inflight_leadership(
+    redis: Redis, url: str, job_id: str, ttl_seconds: float
+) -> bool:
+    """Try to become the one job that runs the pipeline for ``url``.
+
+    ``SET NX`` — atomic: exactly one concurrent caller for the same ``url``
+    ever gets True. ``ttl_seconds`` self-heals a leader that dies without
+    calling :func:`_release_inflight` (a worker crash, a process restart): once
+    it elapses, the next miss claims leadership fresh rather than waiting out a
+    lock nothing will ever release.
+    """
+    key = _INFLIGHT_KEY.format(url_hash=_url_hash(url))
+    return bool(await redis.set(key, job_id, nx=True, ex=max(1, ceil(ttl_seconds))))
+
+
+async def _inflight_leader(redis: Redis, url: str) -> str | None:
+    """The ``job_id`` currently leading ``url``'s check, or None if there isn't one."""
+    key = _INFLIGHT_KEY.format(url_hash=_url_hash(url))
+    value = await redis.get(key)
+    return str(value) if value is not None else None
+
+
+async def _release_inflight(redis: Redis, url: str, job_id: str) -> None:
+    """Release the lock, but only if it is still ours.
+
+    A plain ``GET`` then ``DELETE`` rather than one atomic compare-and-delete:
+    this lock is a cost-saving circuit breaker, not a correctness-critical
+    mutex (nothing downstream trusts "exactly one leader" for safety, only for
+    cost — the real safety property, "at most one *cache write* per finished
+    run", is already guaranteed by ``app.cache.set_check`` being an idempotent
+    overwrite). The tiny race this leaves — releasing a lock a brand-new leader
+    claimed in between our read and our delete — costs at most one extra
+    pipeline run of the kind this feature exists to reduce, never a correctness
+    bug, so it is not worth a Lua script here.
+    """
+    key = _INFLIGHT_KEY.format(url_hash=_url_hash(url))
+    current = await redis.get(key)
+    if current == job_id:
+        await redis.delete(key)
+
+
+_LEAD_OR_JOIN_ATTEMPTS = 3
+"""Bound on :func:`_lead_or_join`'s claim/read retry.
+
+One retry covers the realistic race (the leader we lost to releases the lock
+between our failed claim and our read of it); the second is slack for an
+equally unlucky second collision. Bounded rather than looped forever so a
+pathological sequence of collisions fails toward "run our own pipeline" —
+at worst one redundant run, never a hang — rather than toward retrying
+indefinitely inside a request handler.
+"""
+
+
+async def _lead_or_join(redis: Redis, url: str, job_id: str, ttl_seconds: float) -> str:
+    """Return the ``job_id`` that will run (or is running) the pipeline for
+    ``url``: this call's own ``job_id`` if it wins the single-flight lock, or
+    the existing leader's if it does not.
+
+    Guarantees the id it returns is one **a pipeline is actually running
+    for** — this function never hands back a follower a leader id that turned
+    out to have already vanished, because the caller could not spawn anything
+    for that id either. The tiny remaining race (two collisions in a row,
+    :data:`_LEAD_OR_JOIN_ATTEMPTS` exhausted) resolves toward running this
+    call's own pipeline rather than toward returning a job id nobody is
+    driving — one possible redundant run in an outcome this improbable is a
+    far smaller cost than a client polling a stream that will only ever time
+    out.
+    """
+    for _ in range(_LEAD_OR_JOIN_ATTEMPTS):
+        if await _claim_inflight_leadership(redis, url, job_id, ttl_seconds):
+            return job_id
+        leader_job_id = await _inflight_leader(redis, url)
+        if leader_job_id is not None:
+            return leader_job_id
+        # Lost the claim, but by the time we looked, whoever won had already
+        # released it — nobody is actually leading `url` right now. Loop
+        # around and try to claim it ourselves again.
+    return job_id
+
+
+async def _run_leader_pipeline(
+    coro: Coroutine[Any, Any, None], redis: Redis, url: str, job_id: str
+) -> None:
+    """Run the leader's pipeline coroutine, then release the single-flight lock.
+
+    Runs regardless of how the pipeline finished — success, a caught failure
+    that published ``error``, or (in principle) an escaped exception — so a
+    lock is never held for its full TTL after the run it was guarding is
+    actually over. Deliberately outside :func:`app.pipeline.mock.run_mock_pipeline`
+    and :func:`app.pipeline.run.run_pipeline` themselves (files this task does
+    not own): wrapping the call here keeps M13 entirely inside the file that
+    owns single-flight, whichever pipeline is chosen.
+    """
+    try:
+        await coro
+    finally:
+        await _release_inflight(redis, url, job_id)
 
 
 class Pipeline(Protocol):
@@ -167,13 +326,43 @@ async def start_check(payload: CheckRequest, redis: RedisDep, settings: Settings
     The hit is only taken once :func:`usable_cache_entry` has checked the stored
     claims against the product's invariants, because committing to an unusable
     entry is a trap with a seven-day fuse — see that function.
+
+    **A cache hit is rate-limited per URL** (:func:`_cache_hit_within_budget`,
+    M11): a popular article being replayed is free, but not *infinitely* free —
+    every hit still allocates a job id and a published event stream, so an
+    unbounded flood of hits for one URL is amplification, not reading. Refused
+    with a 429 whose ``detail`` is ``{"code": "rate_limited", "message": ...}``,
+    distinct from the daily-cap 429 so a client can tell "you personally are
+    out of checks" from "this article is hot right now, try again shortly"
+    apart.
+
+    **Concurrent misses of the same uncached URL share one pipeline run**
+    (M13): the first request to claim the URL's single-flight lock
+    (:func:`_claim_inflight_leadership`) spawns the pipeline as before and
+    returns its own ``job_id``; every other concurrent miss for that same URL
+    gets back *that* leader's ``job_id`` instead of starting a second, third,
+    fourth run of the same claims. Both are still charged the daily cap — the
+    lock only dedupes the LLM spend, not each reader's own allowance, so it
+    creates no way to check more than the cap by racing yourself. A follower's
+    ``GET /check/{job_id}/stream`` works exactly like any other client of that
+    job (:func:`app.events.replay_and_stream` already supports more than one
+    subscriber), and is bounded by the same
+    :func:`stream_deadline_seconds` as the leader's own stream — so a leader
+    that dies mid-run without publishing anything cannot leave a follower
+    waiting forever either.
     """
     job_id = str(uuid4())
+    url_str = str(payload.url)
     # AnyUrl normalises (it can append a trailing slash), so hash the string
     # form consistently — cache reads and writes must agree on one spelling.
-    cached = await usable_cache_entry(redis, str(payload.url))
+    cached = await usable_cache_entry(redis, url_str, settings=settings)
 
     if cached is not None:
+        if not await _cache_hit_within_budget(redis, url_str):
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail={"code": "rate_limited", "message": CACHE_HIT_RATE_LIMITED_MESSAGE},
+            )
         claims = cached.get("claims") or []
         await mark_job_started(redis, job_id)
         _spawn(replay_cached(redis, job_id, cached))
@@ -187,9 +376,25 @@ async def start_check(payload: CheckRequest, redis: RedisDep, settings: Settings
             detail={"code": "daily_limit", "message": daily_limit_message(settings.daily_cap)},
         ) from exc
 
+    # This request's own candidate id is marked started *before* it attempts
+    # to claim leadership, unconditionally: if it wins, a follower reading the
+    # now-visible inflight key is guaranteed the marker already exists (no
+    # race with `stream_check`'s `job_exists` 404 check). If it loses, the
+    # marker is simply unused and expires with the rest of a job's keys —
+    # exactly the cost every miss already paid before single-flight existed.
     await mark_job_started(redis, job_id)
-    _spawn(pipeline_for(settings)(redis, job_id, payload, settings=settings))
-    return CheckJob(job_id=job_id, cached=False, claim_count=None)
+    ttl_seconds = stream_deadline_seconds(settings)
+    leader_job_id = await _lead_or_join(redis, url_str, job_id, ttl_seconds)
+    if leader_job_id == job_id:
+        _spawn(
+            _run_leader_pipeline(
+                pipeline_for(settings)(redis, job_id, payload, settings=settings),
+                redis,
+                url_str,
+                job_id,
+            )
+        )
+    return CheckJob(job_id=leader_job_id, cached=False, claim_count=None)
 
 
 def pipeline_for(settings: Settings) -> Pipeline:
@@ -209,7 +414,9 @@ def pipeline_for(settings: Settings) -> Pipeline:
     return run_mock_pipeline if settings.use_mock_pipeline else run_pipeline
 
 
-async def usable_cache_entry(redis: Redis, url: str) -> dict[str, Any] | None:
+async def usable_cache_entry(
+    redis: Redis, url: str, *, settings: Settings
+) -> dict[str, Any] | None:
     """Return the cached result for ``url``, or None if there is nothing usable.
 
     A cache hit is a commitment: :func:`start_check` returns on it without
@@ -228,12 +435,31 @@ async def usable_cache_entry(redis: Redis, url: str) -> dict[str, Any] | None:
     overwrites what was there. One reader gets a slow check instead of every
     reader getting a dead end, and the cache heals itself.
 
+    The same self-healing applies to M25's poisoned-cache case: an entry
+    tagged :data:`~app.pipeline.mock.MOCK_CACHE_SOURCE` — the six fictional
+    fixture claims a ``USE_MOCK_PIPELINE=true`` demo or dev run wrote under
+    this *real* article URL — is refused exactly when the *current* request is
+    not itself running the mock (``settings.use_mock_pipeline`` is False): the
+    one case where the reader in front of us would otherwise be told invented
+    verdicts about the article they are actually reading. It is deleted like
+    any other unusable entry, so the real pipeline runs once and the cache
+    heals to a real result. A mock run reusing another mock run's entry (both
+    sides tagged) is unaffected — that is dev/demo replaying itself, not a
+    poisoning risk — and an entry with no tag at all (the real pipeline never
+    sets one) is unaffected either way.
+
     Only the offending claim's id and the rule it broke are logged. Neither is
     article text, and no install id is in scope here, so this cannot join a URL
     to a reader (brief, privacy rule 6).
     """
     cached = await get_check(redis, url)
     if cached is None:
+        return None
+    if cached.get("source") == MOCK_CACHE_SOURCE and not settings.use_mock_pipeline:
+        logger.warning(
+            "dropping a mock-pipeline cache entry for a real-pipeline request; re-checking"
+        )
+        await delete_check(redis, url)
         return None
     try:
         validate_claims(cached.get("claims") or [])

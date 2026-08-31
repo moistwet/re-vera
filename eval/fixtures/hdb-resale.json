@@ -67,12 +67,20 @@
           "stance": "neutral",
           "quote": "The study surveyed 38 people at two sales galleries",
           "text": "The study surveyed 38 people at two sales galleries over one weekend. The authors call the sample small and not representative of applicants nationally."
+        },
+        {
+          "outlet": "Kopitiam Daily",
+          "url": "https://kopitiam-daily.example/resale-wait-times-seven-years",
+          "date": "2026-02-16",
+          "stance": "supports",
+          "quote": "waiting about seven years on average for a resale flat",
+          "text": "Buyers are waiting about seven years on average for a resale flat, a separate report finds, matching the figure Straits Beacon reported this week."
         }
       ],
       "judge": {
         "verdict": "missing_context",
-        "confidence": "low",
-        "evidence": "Straits Beacon reports the seven-year figure, but the Housing Wait Survey behind it questioned 38 people at two galleries.",
+        "confidence": "medium",
+        "evidence": "Straits Beacon and Kopitiam Daily both report the seven-year figure, but the survey behind it questioned only 38 people at two galleries.",
         "cited_spans": [
           "Buyers now wait seven years on average"
         ]

@@ -29,6 +29,28 @@ DESCRIPTION = (
     "Milestone 1 streams six fictional fixture claims and makes no LLM calls."
 )
 
+REDIS_CONNECT_TIMEOUT_SECONDS = 5.0
+"""Ceiling on establishing a new connection to Redis.
+
+Not a :class:`~app.config.Settings` field: it is an operational ceiling on this
+process's one Redis client, in the same spirit as
+:data:`app.pipeline.providers.base.PROVIDER_TIMEOUT_SECONDS` — a number this
+module owns outright rather than one a deployment is expected to tune.
+"""
+
+REDIS_SOCKET_TIMEOUT_SECONDS = 10.0
+"""Ceiling on any single Redis command's read/write once connected.
+
+**Why this matters more than it looks like it should**: without it, ``redis-py``
+places no bound at all on a socket read, so a single stalled Redis command —
+in the request path (``POST /check``'s cache lookup, the daily-cap ``INCR``) or
+in a spawned worker — can block forever. That defeats every *other* timeout in
+the system, including :func:`app.routes.check.stream_deadline_seconds`'s
+promise that a stream always ends: that deadline is enforced by racing the
+event-relay generator against a clock in ``asyncio``, and an ``await`` on a
+Redis call that never returns races against nothing.
+"""
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -39,8 +61,24 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     Connections are established lazily, so importing or starting the app never
     requires a live Redis — handy for tests, which override
     :func:`app.routes.check.get_redis` with fakeredis instead.
+
+    ``socket_connect_timeout``/``socket_timeout`` bound how long establishing a
+    connection, and every command on it, may take —
+    :data:`REDIS_CONNECT_TIMEOUT_SECONDS` and
+    :data:`REDIS_SOCKET_TIMEOUT_SECONDS`. ``socket_keepalive=True`` asks the OS
+    to probe an idle connection so a network partition is *noticed* — surfaced
+    as a broken connection on the next command — rather than left looking alive
+    forever. None of this retries anything on our behalf: a timed-out command
+    raises straight through to its caller, same as every other provider timeout
+    in this codebase (``CLAUDE.md`` cost rule: no silent retries).
     """
-    client = redis_asyncio.from_url(get_settings().redis_url, decode_responses=True)
+    client = redis_asyncio.from_url(
+        get_settings().redis_url,
+        decode_responses=True,
+        socket_connect_timeout=REDIS_CONNECT_TIMEOUT_SECONDS,
+        socket_timeout=REDIS_SOCKET_TIMEOUT_SECONDS,
+        socket_keepalive=True,
+    )
     app.state.redis = client
     try:
         yield

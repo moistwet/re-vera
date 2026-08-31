@@ -164,6 +164,27 @@ ClaimReview short-circuit under test: a non-empty ``factcheck`` bucket means
 ``retrieve`` must never ask the ``web`` one.
 """
 
+_VERIFIED_BY_CONSTRUCTION: frozenset[str] = frozenset({"factcheck", "official", "cited"})
+"""Fixture buckets whose passages default to ``provenance_verified=True``.
+
+Mirrors :class:`~app.pipeline.types.Passage`'s own docstring: a passage built
+from structured API fields (ClaimReview, an official dataset) or from bytes
+fetched directly from a cited URL is verified *by construction* — the real
+``factcheck.py``/``official.py``/``cited.py`` providers are expected to set
+this bit themselves (see the coordination notes from milestone 2's redteam
+fix), and a fixture standing in for one of them should say what that provider
+would actually have said. ``web`` is deliberately absent: today's web-search
+provider hands the judge a model's free-form summary of a page, never
+something checked against the page's bytes, so a fixture ``web`` passage
+defaults to unverified, matching the honest default in ``types.Passage``.
+
+A fixture entry can override either direction with an explicit ``"verified"``
+key — ``false`` on a factcheck/official/cited entry to exercise the
+weak-evidence path deliberately, or ``true`` on a web entry to simulate a
+future fetch-verified web result — so this default only decides what an
+*unmarked* entry means.
+"""
+
 _SHORT_LABEL = {
     "supported": "sup",
     "contradicted": "con",
@@ -398,6 +419,7 @@ def _claim_fixture(claim_id: str, body: Any, path: Path) -> ClaimFixture:
             if not isinstance(entry, dict):
                 raise EvalError(f"{path}: {claim_id}.{bucket} holds a non-object")
             text = str(entry["text"])
+            default_verified = bucket in _VERIFIED_BY_CONSTRUCTION
             passages.append(
                 Passage(
                     text=text,
@@ -407,6 +429,7 @@ def _claim_fixture(claim_id: str, body: Any, path: Path) -> ClaimFixture:
                     wire=bool(entry.get("wire", False)),
                     origin=origin,  # type: ignore[arg-type]  # from BUCKET_ORIGIN
                     rating=entry.get("rating"),
+                    provenance_verified=bool(entry.get("verified", default_verified)),
                 )
             )
             stances[text] = (
@@ -707,15 +730,27 @@ class _Recorder:
         body: dict[str, Any] = {}
         for bucket, passages in self.buckets.items():
             if passages:
-                body[bucket] = [_passage_entry(item, stances) for item in passages]
+                body[bucket] = [_passage_entry(item, stances, bucket=bucket) for item in passages]
         judge = self.judge()
         if judge is not None:
             body["judge"] = judge
         return body
 
 
-def _passage_entry(passage: Passage, stances: Mapping[str, tuple[str, str]]) -> dict[str, Any]:
-    """One passage as a fixture entry, with defaulted fields left out."""
+def _passage_entry(
+    passage: Passage, stances: Mapping[str, tuple[str, str]], *, bucket: str
+) -> dict[str, Any]:
+    """One passage as a fixture entry, with defaulted fields left out.
+
+    ``verified`` is written only when the live passage's
+    ``provenance_verified`` disagrees with what :data:`_VERIFIED_BY_CONSTRUCTION`
+    would default the bucket to on replay — e.g. a live ``factcheck`` passage
+    that for some reason came back unverified, or a live ``web`` passage a
+    future fetch-verifying provider marked verified. Recording the real value
+    only on disagreement keeps ordinary fixtures readable while still making a
+    ``--record`` run byte-faithful to what the live provider actually said,
+    rather than silently falling back to the bucket's default on replay.
+    """
     stance, quote = stances.get(passage.text, ("neutral", ""))
     entry: dict[str, Any] = {"outlet": passage.outlet, "url": passage.url}
     if passage.date is not None:
@@ -727,6 +762,8 @@ def _passage_entry(passage: Passage, stances: Mapping[str, tuple[str, str]]) -> 
     if stance != "neutral" or quote:
         entry["stance"] = stance
         entry["quote"] = quote
+    if passage.provenance_verified != (bucket in _VERIFIED_BY_CONSTRUCTION):
+        entry["verified"] = passage.provenance_verified
     entry["text"] = passage.text
     return entry
 
@@ -1325,8 +1362,8 @@ def eval_settings(*, live: bool) -> Settings:
     ``_env_file=None`` closes only half of that promise: pydantic-settings still
     reads the **process environment**, and every field in :data:`OFFLINE_PINNED`
     changes what an offline run scores. ``MAX_PASSAGES_PER_CLAIM=1`` in a shell
-    moves this golden set from an abstention rate of 0.219 to 0.531 and drops
-    ``missing_context`` recall from 0.833 to 0.167 — a number nobody would think
+    moves this golden set from an abstention rate of 0.344 to 0.562 and drops
+    ``missing_context`` recall from 0.500 to 0.000 — a number nobody would think
     to distrust, since nothing in the report would mention the variable. Offline
     mode therefore pins those fields back to the defaults declared in
     ``app/config.py``, so an offline run measures the pipeline and the fixtures

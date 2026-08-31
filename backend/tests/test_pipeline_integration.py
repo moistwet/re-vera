@@ -332,6 +332,7 @@ class OneHitFactCheck:
                 wire=False,
                 origin="factcheck",
                 rating="False",
+                provenance_verified=True,
             )
         ][:limit]
 

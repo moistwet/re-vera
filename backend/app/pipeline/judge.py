@@ -47,7 +47,12 @@ against each passage separately rather than against their concatenation, so a
 span stitched from the end of one passage and the start of another matches
 nothing. A span shorter than :data:`MIN_CITED_SPAN_CHARS` is rejected outright:
 "the" occurs in every passage ever published and citing it is not citing
-anything.
+anything — and that floor is measured on the *normalised* span, not the raw
+one, so padding a short fragment with extra blank space cannot buy it past the
+floor only to have the padding vanish at match time. :func:`verified_span`,
+imported from :mod:`app.pipeline.stance` rather than reimplemented here, is
+both checks in one place, so stage 3's citation floor and this one cannot
+quietly drift apart.
 
 Failure policy
 --------------
@@ -86,7 +91,13 @@ from app.config import Settings
 from app.invariants import ALLOWED_CONFIDENCES, ALLOWED_VERDICTS, UNVERIFIABLE
 from app.llm import LLMClient, LLMInvalidOutput, load_prompt
 from app.pipeline.providers.base import MAX_PASSAGE_CHARS
-from app.pipeline.types import ExtractedClaim, Judgement, ScoredPassage, span_occurs_in
+from app.pipeline.stance import MIN_CITED_SPAN_CHARS, verified_span
+from app.pipeline.types import (
+    ExtractedClaim,
+    Judgement,
+    ScoredPassage,
+    normalize_for_match,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -129,21 +140,14 @@ file, and a stage that changes its markers must bump its own prompt version, not
 another stage's.
 """
 
-MIN_CITED_SPAN_CHARS = 12
-"""Shortest cited span that counts as a citation.
-
-The same number as ``extract.MIN_QUOTE_CHARS``, for the same reason. Verification
-asks whether a span occurs in a passage, and short enough spans occur in
-everything: a model that "cites" ``the`` has satisfied the letter of the check
-while resting its verdict on nothing. Twelve characters is roughly two or three
-words — the prompt asks for a whole statement, so a span this short is a sign the
-answer was assembled rather than quoted.
-
-It costs something: a genuine, meaningful short quotation (``4 per cent``, ten
-characters) is rejected and its claim falls to ``unverifiable``. That is the
-direction this stage errs in everywhere, and it is the cheap direction — an
-abstention a reader can see, rather than a confident verdict they cannot check.
-"""
+# MIN_CITED_SPAN_CHARS and verified_span are imported from app.pipeline.stance,
+# not redefined here — the same floor and the same normalised-substring check
+# have to hold in both stages, and a constant copied into two files is a
+# constant that can silently drift when only one of the two is edited. See
+# app.pipeline.stance.MIN_CITED_SPAN_CHARS and app.pipeline.stance.verified_span
+# for the number and the reasoning; re-exported here (see __all__) because this
+# module's own docstrings, and code outside it, refer to
+# ``judge.MIN_CITED_SPAN_CHARS`` as this stage's citation floor.
 
 MAX_EVIDENCE_CHARS = 320
 """Longest evidence sentence accepted before the answer is treated as unusable.
@@ -441,35 +445,42 @@ def _verified_spans(
     sentence, and the verdict those spans supposedly support was reached with the
     fabricated one in hand.
 
-    The span kept is the model's own string, not the matching text cut out of the
-    passage: matching is forgiving about typography, the two differ only in those
-    ways, and keeping the model's wording means every later check sees the string
-    that passed this one.
+    Each span goes through :func:`~app.pipeline.stance.verified_span` — the same
+    floor-then-occurrence check stage 3 runs on ``rationale_quote`` — checked
+    against ``texts`` (the passages this claim was actually shown; never a wider
+    or narrower set). The span kept is the model's own string, not the matching
+    text cut out of the passage: matching is forgiving about typography, the two
+    differ only in those ways, and keeping the model's wording means every later
+    check sees the string that passed this one.
     """
     spans: list[str] = []
     for raw in cited:
         span = raw.strip()
-        if len(span) < MIN_CITED_SPAN_CHARS:
+        verified = verified_span(span, list(texts))
+        if verified is None:
             # Never log the span: it is either passage text or something the
-            # model invented, and neither belongs in a log line.
-            logger.warning(
-                "judge: claim=%s cited a %d-character span, under the %d-character minimum; "
-                "downgrading to unverifiable",
-                claim_id,
-                len(span),
-                MIN_CITED_SPAN_CHARS,
-            )
+            # model invented, and neither belongs in a log line. The two
+            # messages below share one check (verified_span); the length
+            # computed for the message is normalize_for_match's output, the
+            # same string the floor and the match both already use, not a
+            # second implementation of either.
+            if len(normalize_for_match(span)) < MIN_CITED_SPAN_CHARS:
+                logger.warning(
+                    "judge: claim=%s cited a span that normalises to fewer than %d "
+                    "characters, under the citation floor; downgrading to unverifiable",
+                    claim_id,
+                    MIN_CITED_SPAN_CHARS,
+                )
+            else:
+                logger.warning(
+                    "judge: claim=%s cited a %d-character span that is in none of the %d "
+                    "passages it was shown; downgrading to unverifiable",
+                    claim_id,
+                    len(span),
+                    len(texts),
+                )
             return None
-        if not span_occurs_in(span, list(texts)):
-            logger.warning(
-                "judge: claim=%s cited a %d-character span that is in none of the %d passages "
-                "it was shown; downgrading to unverifiable",
-                claim_id,
-                len(span),
-                len(texts),
-            )
-            return None
-        spans.append(span)
+        spans.append(verified)
     return spans
 
 

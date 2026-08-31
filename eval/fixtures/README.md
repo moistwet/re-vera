@@ -46,6 +46,7 @@ Never present any of this as real reporting.
           "rating": "Partly true",        // optional; only meaningful on a factcheck passage
           "stance": "refutes",            // optional, default "neutral"
           "quote": "the median stall rent adjustment at 4 per cent",
+          "verified": true,               // optional; see "provenance_verified" below
           "text": "the passage itself — the only field a model is shown"
         }
       ],
@@ -77,6 +78,35 @@ actually built. A passage with no recorded stance is answered `neutral` with no
 quote — the same thing `score_passages` does with a passage the model skipped, so
 an incomplete fixture degrades to an abstention rather than to an invented
 verdict.
+
+### `verified` — `provenance_verified`, defaulted by bucket
+
+Aggregation's ``side_strength`` will only let a *single* passage decide a
+verdict alone (the primary-source path, or a fact-check's refutation) when
+that passage's `app.pipeline.types.Passage.provenance_verified` bit is set —
+its text is known to really appear where it says, not merely a model's
+summary of it. Two-or-more-independent-source corroboration is not gated this
+way; the corroboration is its own safeguard.
+
+The real providers set this bit themselves: `factcheck.py`, `official.py` and
+`cited.py` build passages from structured API fields or from bytes fetched
+directly, so they are verified *by construction*; `websearch.py` hands the
+judge a model's free-form summary of a page, so it is not, unless a future
+fetch-and-check step confirms it. A fixture standing in for one of those
+providers should say what it would actually have said, so `run_eval.py`
+defaults `verified` to `true` for the `factcheck`, `official` and `cited`
+buckets, and to `false` for `web` — an *unmarked* entry gets its bucket's
+honest default. Write `"verified": false` on a factcheck/official/cited entry
+(or `true` on a web entry) only to deliberately exercise the other path.
+
+Get this wrong and the harness *undercounts*: a fixture that leaves a genuine
+single-source refutation or primary support unmarked was, before this field
+existed, silently treated by aggregation's strength rule as too weak to
+decide anything alone, and most contradicted/supported claims in this golden
+set that rely on exactly one factcheck/official/cited passage would abstain
+to `unverifiable` instead — never the other way around (the gate cannot be
+gamed by *over*-marking, since `unverifiable` claims carry no evidence bucket
+this decides at all).
 
 ### Two things the code will check, and reject
 

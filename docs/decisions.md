@@ -71,3 +71,38 @@ design files, this log and `CLAUDE.md` win.
     and the cached path render identically and each row is written exactly
     once. No other type changed; both bindings were regenerated from
     `shared/schema.json`.
+16. **`CheckRequest` fields are length-bounded, and there is one canonical
+    "same page" identity.**
+    `CheckRequest.text` gets `maxLength: 60000` (~5× `settings.max_article_chars`,
+    which truncates to 12,000 before extraction — generous enough to clear
+    even a long feature or liveblog untouched, bounded enough that the POST
+    body and the Redis cache entry built from it are no longer
+    attacker-sized), `title` gets `maxLength: 500` (well past any real
+    headline), and `install_id` gets `maxLength: 64` (a `crypto.randomUUID()`
+    is 36 characters; the cap is looser than that on purpose so a future
+    format change doesn't need a schema edit, but it stops an unbounded string
+    from being folded into a Redis key). An oversized body is now a clean 422
+    before any work happens. Both bindings were regenerated from
+    `shared/schema.json`; regenerating them also fixed two latent bugs in
+    `shared/generate.sh` unrelated to this change but blocking a clean
+    regeneration — the Pydantic side now passes `--field-constraints` so a
+    bounded field stays typed `str` with its limit on `Field(...)` instead of
+    an inline `constr(...)` call, which is invalid in a static type position
+    under `from __future__ import annotations` and failed `mypy`; the
+    TypeScript side now passes `json2ts` an absolute path, since `pnpm --dir
+    extension exec` runs with `extension/` as its working directory and the
+    script's paths are relative to the repo root.
+    Separately: `aggregate._usable`'s "an article cannot cite itself" guard
+    compared raw URL strings, so retrieval handing the article back with a
+    tracking parameter, a `www.` prefix, a different scheme or a fragment —
+    exactly how a search engine returns a result — made the article corroborate
+    itself. `providers/base.py` now exports one canonical `url_key` /
+    `same_page` / `registrable_domain`, replacing the two private, disagreeing
+    notions of "the same page" that had grown up separately in `aggregate.py`
+    and `providers/websearch.py`. `registrable_domain` also collapses
+    subdomains of one publisher (`news.example.com` and `www.example.com` are
+    one site, not two independent sources), with Singapore's multi-label
+    suffixes (`gov.sg`, `com.sg`, …) handled explicitly rather than left to a
+    Public Suffix List dependency this project doesn't carry. Consuming these
+    in `aggregate.py` and `providers/websearch.py` is tracked as follow-up
+    work in the other stages, not done here.

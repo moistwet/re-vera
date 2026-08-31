@@ -43,6 +43,33 @@ treated as a score. Growing the golden set with hand-labelled real Singapore
 articles is what would turn this into a measurement; until then it is a smoke
 alarm.
 
+### The gate is also self-graded
+
+Read this one before trusting a green run more than a red one.
+
+Every recorded answer under `eval/fixtures/` — the passages, the stance calls,
+the judge calls — was **hand-written by the person who also wrote
+`aggregate.py`'s rules**, in the same offline environment, with no live model
+or API in the loop to disagree with either of them (see "What an offline
+number means, and what it does not" below). A green offline run therefore
+mostly proves one thing: **aggregation does what its own author expected it
+to do on evidence its own author shaped.** It is not independent evidence
+that the rules are *correct*, that a real retrieval or stance or judge call
+would hand aggregation evidence shaped like these fixtures, or that a real
+reader would agree with the resulting verdict. The two `KNOWN MISS` claims
+below exist precisely to keep this run from reading as "always right" — but
+they were chosen by the same author too.
+
+The one check in this file that is *not* self-graded is the gate's direction:
+a change that quietly weakens the threshold, deletes a hard case, or
+relabels a gold verdict to make a regression disappear is exactly the failure
+mode this limitation invites, which is why every gold-label change in this
+golden set is justified individually, by name, in its claim's own `notes` —
+so a reader can check each one against the rule that motivated it rather
+than trusting the aggregate score. Closing this gap for real needs two things
+neither exists yet: `--live` run against real fixtures nobody hand-wrote (see
+below), and hand-labelled real Singapore articles a different person scored.
+
 ### Exit codes
 
 | code | meaning |
@@ -110,10 +137,10 @@ with `_env_file=None`, so a developer's `backend/.env` cannot change a CI result
 — and, because pydantic-settings still reads the process environment,
 `run_eval.OFFLINE_PINNED` additionally pins the one field that would change a
 score (`max_passages_per_claim`, which caps what retrieval keeps) back to the
-default declared in `app/config.py`. Exporting `MAX_PASSAGES_PER_CLAIM=1` used to
-take this set from an abstention rate of 0.219 to 0.531 with nothing in the
-report saying why. `--live` pins nothing: a live run should use the configuration
-it was deliberately pointed at.
+default declared in `app/config.py`. Exporting `MAX_PASSAGES_PER_CLAIM=1` would
+otherwise take this set from an abstention rate of 0.344 to 0.562 with nothing in
+the report saying why. `--live` pins nothing: a live run should use the
+configuration it was deliberately pointed at.
 
 ### `--live`
 
@@ -160,13 +187,49 @@ verdicts and the hard cases the brief asks for:
 
 | case | claims |
 | --- | --- |
-| true-but-misleading statistic (`missing_context`) | `hawker-04`, `mrt-04`, `hdb-03`, `dengue-03`, `screens-03` |
+| true-but-misleading statistic, corroborated (`missing_context`) | `hdb-03` |
+| true-but-misleading statistic, but only one uncorroborated source — correctly `unverifiable`, not `missing_context` (see below) | `hawker-04`, `mrt-04`, `dengue-03`, `screens-03` |
 | genuinely no evidence (`unverifiable`) | `hawker-02`, `mrt-05`, `hdb-05`, `dengue-04`, `screens-05` |
 | misquotation (`attribution`) | `hawker-05`, `mrt-03`, `hdb-04`, `otter-03`, `screens-04` |
 | wire-copy-only, collapsing to one source | `otter-01` |
 | numeric claims against official data | `hawker-01`, `mrt-01`, `hdb-01`, `dengue-01`, `screens-01` |
 | ClaimReview hit short-circuiting web search | `otter-02`, `screens-03` |
-| rules overruling the judge | `hawker-04`, `otter-01` |
+| rules overruling the judge | `hawker-04`, `mrt-04`, `dengue-03`, `screens-03`, `otter-01` |
+
+### Why five `missing_context` claims turned into one
+
+`aggregate.py`'s rules changed after this golden set was first written: a
+`missing_context` verdict now has to clear the same corroboration bar
+`supported` does (two independent supporting sources, or one *verified*
+primary — `side_strength`) before a detected signal (a small sample, an
+outdated figure, a fact-checker's own "partly true") is allowed to weaken it.
+Previously, one uncorroborated page with a signal attached was enough on its
+own — which the rule change's own commit message calls out by name as a
+redteam finding: "the old code let one weak page reach `missing_context` on a
+signal alone."
+
+Four of this set's five original `missing_context` claims
+(`hawker-04`, `mrt-04`, `dengue-03`, `screens-03`) have exactly **one**
+genuinely supporting passage each — a second passage exists in each fixture,
+but it is the claim's own methodology note, scored `neutral` (it never
+restates the figure, so a stance model has no reason to call it
+`supports`), not a second independent report. Under the new rule that is not
+corroboration, so the honest verdict for all four is now `unverifiable`, and
+their gold labels were updated to match — this is a rule change working as
+intended, not a pipeline regression, and it is documented individually in
+each claim's `notes` in `golden/fictional.jsonl`.
+
+That left the golden set with **zero** positive coverage of `missing_context`
+under the new rule — every remaining `missing_context` gold claim was either
+retired or is the pre-existing `mrt-06` known miss (below), so nothing would
+ever demonstrate the pipeline reaching that verdict *correctly*. Rather than
+let that coverage quietly disappear, `hdb-03` was deliberately strengthened:
+`eval/fixtures/hdb-resale.json` gained a second, independent, genuinely
+`supports`-stance passage (a second outlet corroborating the same seven-year
+figure), so the claim now clears the new bar honestly and `hdb-03` is the
+one golden claim that shows `missing_context` reached the right way. This is
+a fixture change, not a label change dressed up as one — see the note on
+`hdb-03` for the detail.
 
 ### Two claims the pipeline is expected to get wrong
 

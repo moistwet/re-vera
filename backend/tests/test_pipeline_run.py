@@ -246,6 +246,24 @@ class FakeSearch:
             self.in_flight -= 1
 
 
+@dataclass
+class RaisingSearch(FakeSearch):
+    """A :class:`FakeSearch` that fails every call — the shape of an expired key.
+
+    BLOCKER B5's repro: an expired key, a wrong tool name, or a quota block all
+    surface the same way to this pipeline — the search provider raises on
+    every call. A subclass of :class:`FakeSearch` rather than a fresh fake so
+    it drops straight into :func:`make_deps`'s ``search=`` seam and
+    :func:`fake_providers`'s typing unchanged.
+    """
+
+    calls: int = 0
+
+    async def search(self, query: str, *, limit: int) -> list[Passage]:
+        self.calls += 1
+        raise RuntimeError("HTTP 401")
+
+
 def fake_providers(search: FakeSearch) -> Providers:
     """The four providers, with only web search doing anything.
 
@@ -543,14 +561,28 @@ async def test_the_result_is_cached_before_done(
     assert cached["checked_at"]
 
 
-async def test_a_run_with_a_failed_claim_is_not_cached(fake_redis: FakeRedis) -> None:
-    """We cache results, not outages.
+async def test_a_run_with_one_idiosyncratic_claim_failure_is_still_cached(
+    fake_redis: FakeRedis,
+) -> None:
+    """MAJOR M14: one claim's bad luck must not force every other claim's evidence
+    to be re-bought on the next reader's visit.
 
-    A cache entry lives for seven days and is served to every later reader of
-    that URL without re-running anything, so freezing a ten-second provider
-    outage into one would charge every subsequent reader for it. The claim is
-    still published — the reader gets an honest abstention now — and the next
-    reader of that URL gets a real check instead of the failure.
+    **Deliberately rewritten from the old behaviour.** This test used to be
+    named ``test_a_run_with_a_failed_claim_is_not_cached`` and asserted
+    ``get_check(...) is None`` here — i.e. that *any* claim failing skipped
+    caching the whole run. That was the bug MAJOR M14 reports: six good
+    verdicts and one flaky stance call meant every subsequent reader of this
+    URL paid to re-check all seven claims, forever, until one lucky run
+    finished with zero failures. The new policy
+    (:class:`~app.pipeline.run._ClaimBatch` /
+    :attr:`~app.pipeline.run._ClaimBatch.cacheable`) caches a run whenever at
+    least one claim succeeded, so the six real verdicts are kept and only the
+    one honest abstention is what a retry would improve on.
+
+    This is *not* the same scenario as BLOCKER B5 (below): retrieval itself
+    succeeds here — the fake web search answers normally — and it is stage 3
+    (stance) that fails for one claim, a stand-in for a stage bug or a
+    one-off provider hiccup rather than a systemic outage.
     """
     deps, _, _ = make_deps(fail_for={"200 stalls": LLMUnavailable("stance: provider down")})
     request = check_request()
@@ -559,7 +591,120 @@ async def test_a_run_with_a_failed_claim_is_not_cached(fake_redis: FakeRedis) ->
 
     records = await published(fake_redis)
     assert records[-1]["event"] == "done"
+
+    cached = await get_check(fake_redis, str(request.url))
+    assert cached is not None
+    cached_by_id = {claim["id"]: claim for claim in cached["claims"]}
+    assert cached_by_id["c2"]["verdict"] == "unverifiable"
+    assert cached_by_id["c2"]["evidence"] == FAILED_CLAIM_EVIDENCE
+    # The other six claims are cached with their real verdicts, not silently
+    # dropped or downgraded because one sibling claim failed. c5 is the fixture's
+    # own honestly-empty-web claim (NO_EVIDENCE_QUOTE) and is unverifiable on
+    # every run, injected failure or not — the other five are genuinely supported.
+    assert cached_by_id["c5"]["verdict"] == "unverifiable"
+    assert cached_by_id["c5"]["evidence"] != FAILED_CLAIM_EVIDENCE
+    other_ids = [cid for cid in EXPECTED_CLAIM_IDS if cid not in {"c2", "c5"}]
+    assert [cached_by_id[cid]["verdict"] for cid in other_ids] == ["supported"] * len(other_ids)
+
+
+async def test_a_run_where_every_claims_retrieval_is_broken_is_not_cached(
+    fake_redis: FakeRedis,
+) -> None:
+    """BLOCKER B5, reproduced end to end: a search provider raising on every call
+    (an expired key, a wrong tool name, a quota block) must not be reported —
+    or cached — as a completed search that found nothing.
+
+    Before the fix, every claim's retrieval failure was swallowed to ``[]`` by
+    :func:`~app.pipeline.retrieve._guarded`, so this scenario published seven
+    ``unverifiable`` claims that all looked like an honest empty web *and*
+    wrote that to the 7-day cache, telling every later reader of this article
+    "nothing to see here" for a week. Now every claim's :func:`check_claim`
+    raises :class:`~app.pipeline.run.RetrievalFailedError`, is published with
+    :data:`FAILED_CLAIM_EVIDENCE` (which never claims a completed search), and
+    the run as a whole — nothing succeeded — is not cached.
+    """
+    deps, _, _ = make_deps(search=RaisingSearch())
+    request = check_request()
+
+    await run_pipeline(fake_redis, JOB_ID, request, settings=pipeline_settings(), deps=deps)
+
+    records = await published(fake_redis)
+    claims = events_of(records, "claim")
+    assert sorted(claim["id"] for claim in claims) == EXPECTED_CLAIM_IDS
+    assert all(claim["verdict"] == "unverifiable" for claim in claims)
+    assert all(claim["evidence"] == FAILED_CLAIM_EVIDENCE for claim in claims)
+    assert all(claim["sources"] == [] for claim in claims)
+    assert all(claim["confidence"] is None for claim in claims)
+    for claim in claims:
+        validate_claim(claim)
+
+    assert records[-1]["event"] == "done"
+    assert DoneEvent.model_validate(records[-1]["data"]).counts.unverifiable == len(
+        EXPECTED_CLAIM_IDS
+    )
+    # The BLOCKER B5 assertion: nothing succeeded, so nothing is cached.
     assert await get_check(fake_redis, str(request.url)) is None
+
+
+# ---------------------------------------------------------------- resource cleanup
+
+
+@dataclass
+class FakeOpenAIClient:
+    """Stands in for ``openai.AsyncOpenAI`` — just enough to prove it got closed."""
+
+    closed: bool = False
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+@dataclass
+class FakeRawTransport:
+    """Stands in for :class:`~app.llm.OpenAIChatTransport` — just its ``_client``.
+
+    ``PipelineDeps.build`` reaches into this private attribute (see its class
+    docstring for why); this fake exists so the test can observe that without
+    needing the real SDK or a key.
+    """
+
+    _client: FakeOpenAIClient
+
+    async def complete(self, **kwargs: Any) -> LLMResponse:
+        raise AssertionError("not exercised by this test")
+
+
+async def test_pipeline_deps_build_closes_the_openai_client(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """MAJOR M12: the resource leak. ``PipelineDeps.aclose`` must close the OpenAI
+    client's connection pool, not just the plain HTTP client.
+
+    Before the fix, :meth:`~app.pipeline.run.PipelineDeps.build` never kept a
+    handle on the ``openai.AsyncOpenAI`` instance
+    :func:`~app.llm.build_openai_transport` opens, so
+    :meth:`~app.pipeline.run.PipelineDeps.aclose` — called on every path
+    through :func:`~app.pipeline.run.run_pipeline`, success or failure — closed
+    only ``owned_http`` and silently leaked one OpenAI client (and its
+    connection pool) per check. ``build_openai_transport`` is monkeypatched
+    here to a fake so the test can observe the close without a key or the real
+    SDK.
+    """
+    fake_client = FakeOpenAIClient()
+    monkeypatch.setattr(
+        run_module,
+        "build_openai_transport",
+        lambda api_key, timeout: FakeRawTransport(_client=fake_client),
+    )
+
+    deps = run_module.PipelineDeps.build(pipeline_settings(openai_api_key="test-key-unused"))
+
+    assert deps.owned_openai_client is fake_client
+    assert fake_client.closed is False
+
+    await deps.aclose()
+
+    assert fake_client.closed is True
 
 
 # ---------------------------------------------------------------- robustness

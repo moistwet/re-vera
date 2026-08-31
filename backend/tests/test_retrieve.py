@@ -24,6 +24,7 @@ from app.pipeline.providers.cited import LinkedCitationProvider
 from app.pipeline.providers.factcheck import FACTCHECK_ENDPOINT, GoogleFactCheckProvider
 from app.pipeline.providers.official import DataGovSgProvider
 from app.pipeline.providers.websearch import OpenAIWebSearchProvider
+from app.pipeline.retrieve import RetrievalOutcome
 from app.pipeline.types import ClaimKind, ExtractedClaim, Passage, PassageOrigin
 from tests.conftest import build_settings
 
@@ -31,11 +32,17 @@ ARTICLE_URL = "https://news.example/hawker-rents"
 """The fictional article every claim in this file was extracted from."""
 
 WIRE_STORY = (
-    "The agency said the median stall rental adjustment for the coming year is four per "
-    "cent, and that rentals at twelve centres will not change at all. Stallholders were "
+    "The agency said the median stall rental adjustment for the coming year is 4 per "
+    "cent, and that rentals at 12 centres will not change at all. Stallholders were "
     "briefed at their respective centres last month, it added."
 )
-"""One agency story, reprinted verbatim under several mastheads below."""
+"""One agency story, reprinted verbatim under several mastheads below.
+
+Figures are written as digits (``4``, ``12``), not spelled out, on purpose:
+:func:`~app.pipeline.retrieve._fingerprint` only recognises a token as a
+*number* when it contains a digit character, and several tests below are
+specifically about how two passages' numeric tokens are compared.
+"""
 
 
 # ---------------------------------------------------------------- fakes
@@ -148,15 +155,28 @@ def settings() -> Settings:
     return build_settings(max_passages_per_claim=6)
 
 
-async def retrieve(
+async def retrieve_outcome(
     claim_: ExtractedClaim, providers: Providers, settings_: Settings
-) -> list[Passage]:
-    """Call the stage under test with the article URL every test shares."""
+) -> RetrievalOutcome:
+    """Call the stage under test with the article URL every test shares.
+
+    Returns the full :class:`RetrievalOutcome`, including
+    ``providers_failed``/``retrieval_broken`` — what BLOCKER B5's tests need.
+    Most tests in this file only care about the passages themselves and use
+    :func:`retrieve` instead.
+    """
     from app.pipeline.retrieve import retrieve_passages
 
     return await retrieve_passages(
         claim_, article_url=ARTICLE_URL, providers=providers, settings=settings_
     )
+
+
+async def retrieve(
+    claim_: ExtractedClaim, providers: Providers, settings_: Settings
+) -> list[Passage]:
+    """Like :func:`retrieve_outcome`, but just the passages — what most tests here want."""
+    return (await retrieve_outcome(claim_, providers, settings_)).passages
 
 
 # ---------------------------------------------------------------- the cost guarantee
@@ -369,15 +389,20 @@ async def test_a_reprint_that_changed_a_word_is_still_the_same_story(
 async def test_two_copies_whose_numbers_disagree_stay_two_passages(
     settings: Settings,
 ) -> None:
-    """A correction and the story it corrects must never collapse into one source."""
-    corrected = WIRE_STORY.replace("four per cent", "fourteen per cent").replace(
-        "twelve centres", "twenty centres"
+    """A correction and the story it corrects must never collapse into one source.
+
+    Both figures change (``4`` → ``14``, ``12`` → ``20``), so the two passages'
+    numeric tokens share nothing at all — the case MAJOR M4's loosened veto
+    (:data:`~app.pipeline.retrieve.NUMBER_AGREEMENT`) still refuses to merge,
+    however close the prose otherwise reads.
+    """
+    corrected = WIRE_STORY.replace("4 per cent", "14 per cent").replace(
+        "12 centres", "20 centres"
     )
     search = FakeProvider(
         [
             passage(text=WIRE_STORY, url="https://cna.example/story-a"),
-            passage(text=corrected.replace("fourteen", "14").replace("twenty", "20"),
-                    url="https://cna.example/story-a-corrected"),
+            passage(text=corrected, url="https://cna.example/story-a-corrected"),
         ]
     )
     providers = make_providers(search=search)
@@ -385,6 +410,56 @@ async def test_two_copies_whose_numbers_disagree_stay_two_passages(
     passages = await retrieve(claim(), providers, settings)
 
     assert len(passages) == 2
+
+
+async def test_wire_copies_snipped_at_different_points_still_merge(
+    settings: Settings,
+) -> None:
+    """**MAJOR M4.** A shorter pickup that dropped one figure is still the same story.
+
+    Before the fix, :func:`~app.pipeline.retrieve._similarity` vetoed a merge
+    the instant the two passages' numeric-token *sets* were not identical —
+    which is exactly what happens when one outlet's pickup is snipped shorter
+    than another's and drops a clause that named one of the figures. That
+    turned one wire story, quoted at two lengths, into two "independent"
+    sources: precisely the input aggregation's "two or more independent
+    sources" rule must not be fooled by.
+
+    Here the shorter copy keeps the ``4 per cent`` figure but drops the clause
+    naming ``12 centres`` — a real, plausible snip, not a fabricated one — so
+    the numeric-token sets differ (``{4, 12}`` vs ``{4}``) while the prose is
+    otherwise close enough to clear :data:`~app.pipeline.retrieve.WIRE_SIMILARITY`.
+    The old exact-equality rule vetoed this pair outright; the loosened
+    :data:`~app.pipeline.retrieve.NUMBER_AGREEMENT` check (0.5 overlap here,
+    since the snip kept one of the two figures) does not.
+    """
+    full = (
+        "The agency said the median stall rental adjustment for the coming year is 4 "
+        "per cent, and that rentals at 12 centres will not change at all, according to "
+        "a statement issued to reporters on Tuesday morning ahead of the annual review. "
+        "Stallholders were briefed at their respective centres last month, and the "
+        "agency said further updates would follow before the new leases take effect, "
+        "it added."
+    )
+    snipped = (
+        "The agency said the median stall rental adjustment for the coming year is 4 "
+        "per cent, according to a statement issued to reporters on Tuesday morning "
+        "ahead of the annual review. Stallholders were briefed at their respective "
+        "centres last month, and the agency said further updates would follow before "
+        "the new leases take effect, it added."
+    )
+    search = FakeProvider(
+        [
+            passage(text=full, url="https://cna.example/story-b"),
+            passage(text=snipped, url="https://mothership.example/story-b"),
+        ]
+    )
+    providers = make_providers(search=search)
+
+    passages = await retrieve(claim(), providers, settings)
+
+    assert len(passages) == 1
+    assert passages[0].wire is True
 
 
 async def test_two_independent_reports_stay_two_sources(settings: Settings) -> None:
@@ -482,16 +557,24 @@ async def test_ranking_prefers_factcheck_then_official_then_cited_then_web() -> 
 async def test_a_provider_that_raises_yields_nothing_and_breaks_nothing(
     settings: Settings,
 ) -> None:
-    """One dead provider costs the claim one source, not the whole check."""
+    """One dead provider costs the claim one source, not the whole check.
+
+    Also **BLOCKER B5**: the fact-check provider that raised is recorded as
+    failed, but because the official-data supplement came back with a real
+    passage, the outcome as a whole is not ``retrieval_broken`` — there is
+    genuine evidence here for the judge to read.
+    """
     raising = RaisingProvider()
     official = FakeProvider([passage(origin="official")])
     providers = make_providers(factcheck=raising, search=raising, official=official)
 
-    passages = await retrieve(claim("numeric"), providers, settings)
+    outcome = await retrieve_outcome(claim("numeric"), providers, settings)
 
-    assert [item.origin for item in passages] == ["official"]
+    assert [item.origin for item in outcome.passages] == ["official"]
     # Fact check raised, so web search was still attempted: a failure is not a hit.
     assert raising.calls == 2
+    assert set(outcome.providers_failed) == {"fact-check", "web-search"}
+    assert outcome.retrieval_broken is False
 
 
 async def test_a_provider_that_hangs_is_cut_off_and_the_rest_still_answers() -> None:
@@ -515,8 +598,69 @@ async def test_a_provider_returning_the_wrong_type_is_ignored(settings: Settings
 
 
 async def test_no_evidence_is_an_empty_list_not_an_error(settings: Settings) -> None:
-    """A claim nothing was found for is honestly unverifiable, which is a valid answer."""
-    assert await retrieve(claim(), make_providers(), settings) == []
+    """A claim nothing was found for is honestly unverifiable, which is a valid answer.
+
+    **BLOCKER B5, the other half of the story:** every provider here is a
+    :class:`FakeProvider` returning ``[]`` — a provider that was consulted and
+    genuinely answered "no results" is not a *failure*, so
+    :attr:`RetrievalOutcome.retrieval_broken` must stay ``False``. This is the
+    case the fix must not break: an honestly empty web still produces an
+    honest ``unverifiable``, not a claim that looks like retrieval broke.
+    """
+    outcome = await retrieve_outcome(claim(), make_providers(), settings)
+
+    assert outcome.passages == []
+    assert outcome.providers_failed == ()
+    assert outcome.retrieval_broken is False
+
+
+# ---------------------------------------------------------------- retrieval_broken (BLOCKER B5)
+
+
+async def test_every_provider_failing_marks_retrieval_as_broken(settings: Settings) -> None:
+    """The exact BLOCKER B5 repro: every provider consulted raises on every call.
+
+    Before the fix this produced ``passages == []`` with no way to tell it
+    apart from an honestly empty web, and :mod:`app.pipeline.run` published it
+    (and cached it) as a completed search that found nothing. Now the outcome
+    says plainly that nothing was consulted successfully.
+    """
+    raising = RaisingProvider()
+    providers = make_providers(factcheck=raising, search=raising)
+
+    outcome = await retrieve_outcome(claim("general"), providers, settings)
+
+    assert outcome.passages == []
+    assert set(outcome.providers_failed) == {"fact-check", "web-search"}
+    assert outcome.retrieval_broken is True
+
+
+async def test_a_malformed_answer_also_counts_as_retrieval_broken(settings: Settings) -> None:
+    """A provider returning garbage is exactly as broken as one that raises.
+
+    :class:`WrongTypeProvider` never raises — it just answers with something
+    that is not a list of passages — and that must be caught by the same
+    signal, not treated as "the web has nothing to say".
+    """
+    providers = make_providers(factcheck=WrongTypeProvider(), search=WrongTypeProvider())
+
+    outcome = await retrieve_outcome(claim("general"), providers, settings)
+
+    assert outcome.passages == []
+    assert outcome.retrieval_broken is True
+
+
+async def test_an_empty_quote_is_not_retrieval_broken(settings: Settings) -> None:
+    """No query means no provider was consulted at all — nothing failed, nothing to report."""
+    providers = make_providers(
+        factcheck=FakeProvider([passage()]), search=FakeProvider([passage()])
+    )
+
+    outcome = await retrieve_outcome(claim("general", "   "), providers, settings)
+
+    assert outcome.passages == []
+    assert outcome.providers_failed == ()
+    assert outcome.retrieval_broken is False
 
 
 # ---------------------------------------------------------------- construction

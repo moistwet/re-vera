@@ -55,6 +55,7 @@ if ! uv run --with datamodel-code-generator datamodel-codegen \
   --output-model-type pydantic_v2.BaseModel \
   --target-python-version 3.12 \
   --disable-timestamp \
+  --field-constraints \
   --custom-file-header "$PY_HEADER"; then
   echo "generate.sh: datamodel-codegen failed. Check that PyPI is reachable;" >&2
   echo "             'uv run --with datamodel-code-generator datamodel-codegen --help' should work." >&2
@@ -63,8 +64,8 @@ fi
 
 echo "generate.sh: $SCHEMA -> $TS_OUT"
 if ! pnpm --dir extension exec json2ts \
-  --input "$SCHEMA" \
-  --output "$TS_OUT" \
+  --input "$ROOT/$SCHEMA" \
+  --output "$ROOT/$TS_OUT" \
   --bannerComment "$TS_HEADER"; then
   echo "generate.sh: json2ts failed. Is json-schema-to-typescript installed in extension/?" >&2
   echo "             pnpm --dir extension add -D json-schema-to-typescript" >&2

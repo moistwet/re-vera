@@ -83,6 +83,9 @@ __all__ = [
     "iso_date",
     "load_recorded_http",
     "outlet_from_url",
+    "registrable_domain",
+    "same_page",
+    "url_key",
 ]
 
 PROVIDER_TIMEOUT_SECONDS = 10.0
@@ -519,6 +522,197 @@ def domain_of(url: str) -> str:
         return ""
     host = host.lower()
     return host[4:] if host.startswith("www.") else host
+
+
+def url_key(url: str) -> str:
+    """Comparison key for two URLs that may name the same page.
+
+    **The one canonical "same page" identity for the whole pipeline.** Before
+    this function existed, ``aggregate.py`` compared raw URL strings (missing a
+    tracking parameter, a scheme change, a trailing slash or a ``www.`` prefix
+    turned "the article citing itself" into "the article corroborated by an
+    independent source") and ``websearch.py`` had its own, stronger, private
+    notion of the same thing. One implementation now backs both, and any other
+    place in the pipeline that needs to ask "is this the same page as that one"
+    imports this rather than writing a third variant.
+
+    Folds away exactly what a search engine, a CMS or a reader's own click
+    routinely adds without it being a different page: the scheme (``http`` vs
+    ``https``), a leading ``www.`` label, a trailing slash on the path, the
+    query string (tracking parameters live here) and the fragment. Also
+    lower-cases host and path.
+
+    Returns ``""`` for a URL with no host at all (relative, malformed, or
+    ``javascript:``/``data:``/similar) — such a URL is never "the same page" as
+    anything, including another equally hostless one, which is why
+    :func:`same_page` treats an empty key on either side as "no match" rather
+    than as a match between two unknowns.
+
+    Honest limits of this heuristic, worth knowing before trusting it further
+    than "probably the same page":
+
+    * **Path comparison is lower-cased.** Almost every news CMS treats its URL
+      paths case-insensitively, but nothing guarantees it; a server that really
+      does distinguish ``/Article`` from ``/article`` will be folded together
+      here as one page.
+    * **The query string is dropped entirely**, not merely tracking
+      parameters. A site that encodes real content in the query (pagination,
+      an article's variant) will have two genuinely different pages compare
+      equal. For a news article's canonical URL — the case this function
+      exists for — that trade is the safer direction: it is what lets a
+      tracking-parameter copy of the article being checked still be recognised
+      as the article being checked.
+    * **No redirect resolution.** Two URLs that both eventually serve the same
+      content through different paths (a short link, a legacy redirect) will
+      not compare equal; only the literal string is folded.
+    """
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return ""
+    host = (parts.hostname or "").lower()
+    if not host:
+        return ""
+    if host.startswith("www.") and len(host) > len("www."):
+        host = host[len("www.") :]
+    path = parts.path.rstrip("/").lower()
+    return f"{host}{path}"
+
+
+def same_page(a: str, b: str) -> bool:
+    """True when ``a`` and ``b`` name the same page under :func:`url_key`.
+
+    A URL with no recognisable host is never treated as matching anything,
+    including another URL that also has none — two unknowns are not evidence
+    they are the same unknown.
+    """
+    key_a, key_b = url_key(a), url_key(b)
+    return bool(key_a) and key_a == key_b
+
+
+_MULTI_LABEL_SUFFIXES = frozenset(
+    {
+        # Singapore — the target market (CLAUDE.md), spelled out explicitly
+        # rather than left to the general two-label fallback below.
+        "com.sg",
+        "gov.sg",
+        "org.sg",
+        "net.sg",
+        "edu.sg",
+        "per.sg",
+        # A handful of other common two-label public suffixes news evidence
+        # is likely to arrive from. Not remotely exhaustive — see the
+        # docstring's honest limits.
+        "co.uk",
+        "org.uk",
+        "gov.uk",
+        "ac.uk",
+        "net.uk",
+        "com.au",
+        "gov.au",
+        "org.au",
+        "net.au",
+        "edu.au",
+        "co.nz",
+        "govt.nz",
+        "org.nz",
+        "co.jp",
+        "or.jp",
+        "ne.jp",
+        "com.cn",
+        "gov.cn",
+        "org.cn",
+        "net.cn",
+        "co.in",
+        "gov.in",
+        "org.in",
+        "net.in",
+        "com.my",
+        "gov.my",
+        "org.my",
+        "net.my",
+        "com.hk",
+        "gov.hk",
+        "org.hk",
+        "net.hk",
+    }
+)
+"""Two-label public suffixes under which one more label is the registrable
+domain (``moh.gov.sg``, not ``gov.sg``), rather than the ordinary one-label
+case (``example.com``).
+
+A fixed, hand-maintained set — **not** the Public Suffix List, which this
+project does not depend on (``CLAUDE.md``: ask before adding a dependency).
+Chosen to cover Singapore's domains explicitly, since that is the target
+market, plus a handful of other common two-label suffixes evidence is likely
+to arrive from. A domain suffix missing from this set silently falls back to
+the plain "last two labels" rule, which is wrong for it in the same direction
+every unlisted two-label suffix is wrong: it will under-collapse two
+subdomains of what is really one registration (e.g. an unlisted
+``news.example.co.zz`` and ``shop.example.co.zz`` would be treated as two
+different two-label domains, ``example.co.zz``, i.e. treated as *one* site —
+which happens to be correct here — but a genuinely three-label suffix not in
+this set would collapse incorrectly). See :func:`registrable_domain` for the
+full trade-off this makes.
+"""
+
+
+def registrable_domain(url: str) -> str:
+    """The registrable domain of ``url``'s host: the site, with subdomains collapsed.
+
+    ``news.example.com.sg`` and ``www.example.com.sg`` both return
+    ``example.com.sg`` — two subdomains of one publisher are one site, which
+    matters wherever the pipeline asks whether two sources are *independent*
+    (:mod:`app.pipeline.aggregate`'s ``source_group``, and the self-citation
+    check in ``_usable``) or whether a page is *primary* (a check against a
+    government domain). Without this, ``news.gov.sg`` and ``press.gov.sg``
+    would count as two independent sources, which is the second bug this
+    function exists to close.
+
+    The algorithm, since this project carries no Public Suffix List
+    dependency: take the host's last two labels; if those two labels are
+    themselves a known two-label public suffix (:data:`_MULTI_LABEL_SUFFIXES`,
+    e.g. ``gov.sg``, ``co.uk``), take the last three instead. Otherwise the
+    last two labels *are* the registrable domain, which is correct for the
+    overwhelming majority of domains — including every plain ``.com``/``.sg``/
+    ``.org`` site — without needing a suffix list at all.
+
+    Honest limits:
+
+    * It knows only the two-label suffixes in :data:`_MULTI_LABEL_SUFFIXES`.
+      A three-label public suffix (rare) or a two-label suffix missing from
+      that set is not handled correctly.
+    * It does not know about "privately registered" public suffixes such as
+      ``blogspot.com`` or ``github.io``, where two different subdomains
+      really are two different, unrelated sites. Collapsing
+      ``a.blogspot.com`` and ``b.blogspot.com`` into one "site" is the wrong
+      call for those hosts specifically; it is the right call for every
+      ordinary newsroom domain, which is what this function is for.
+    * A bare public suffix itself (``www.gov.sg``, two labels after the
+      ``www.`` fold happens only in :func:`url_key`, not here — this function
+      does *not* strip ``www.`` before counting labels) can return more than
+      the "true" registrable domain, e.g. ``www.gov.sg`` returns
+      ``www.gov.sg`` rather than ``gov.sg``, because the algorithm cannot
+      distinguish "www" from a real registered label. This mirrors how the
+      registrable-domain algorithm behaves on real public-suffix
+      implementations for a bare suffix host, and is deliberately left as-is
+      rather than special-cased.
+
+    Returns ``""`` when ``url`` has no host at all.
+    """
+    try:
+        host = (urlsplit(url).hostname or "").lower()
+    except ValueError:
+        return ""
+    if not host:
+        return ""
+    labels = host.split(".")
+    if len(labels) <= 2:
+        return host
+    last_two = ".".join(labels[-2:])
+    if last_two in _MULTI_LABEL_SUFFIXES:
+        return ".".join(labels[-3:])
+    return last_two
 
 
 def outlet_from_url(url: str) -> str:

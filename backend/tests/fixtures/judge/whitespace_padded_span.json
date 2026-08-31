@@ -1,0 +1,13 @@
+{
+  "_note": "A confident verdict cited on `40    per    cent` — seventeen raw characters, comfortably over MIN_CITED_SPAN_CHARS if measured on the untouched string, but only eleven once whitespace runs collapse to single spaces at match time (`40 per cent`), the same short fragment `trivial_span.json` already proves is not a citation of anything. This is the regression fixture for the bug where the floor was measured on the wrong string: padding a short span with extra internal spaces used to buy it past a raw-length check that normalisation immediately erased. Downgraded under the fixed floor.",
+  "json": {
+    "verdict": "contradicted",
+    "confidence": "high",
+    "evidence": "Island Wire puts the figure at 4 per cent, not 40 per cent.",
+    "cited_spans": [
+      "40    per    cent"
+    ]
+  },
+  "prompt_tokens": 744,
+  "completion_tokens": 72
+}

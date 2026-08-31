@@ -285,6 +285,27 @@ removed here is still enforced, just by us instead of by the provider. If a
 provider later accepts them, deleting entries from this set is safe.
 """
 
+_CLASS_LEVEL_BLOAT_KEYWORDS = frozenset({"description"})
+"""Keywords stripped only from a **class-level** schema node (one with its own
+``properties``): the root object and every entry under ``$defs``.
+
+``pydantic`` copies a model's whole docstring into that node's JSON Schema
+``description`` — and every one of this codebase's structured-output models is
+documented the way the rest of the codebase is, in multi-paragraph prose aimed
+at the next engineer, not at the model being called. That prose is billed as
+input tokens on *every* call using that schema: one extraction call per
+article, one stance call per claim, one judge call per claim. None of it is
+model guidance — the model guidance lives in the prompt body
+(``app/prompts/*.md``), which this function does not touch.
+
+Deliberately narrower than :data:`_UNSUPPORTED_KEYWORDS`: a *property*-level
+``description`` (from an explicit ``Field(description=...)``, which no
+structured-output model in this codebase currently uses) is left alone, so a
+future stage can add one short, deliberate field description without it being
+silently deleted here. See :func:`_strictify` for how the two levels are told
+apart.
+"""
+
 
 def strict_json_schema(model: type[BaseModel]) -> dict[str, Any]:
     """Derive the JSON Schema sent with a structured-output request.
@@ -322,6 +343,15 @@ def _strictify(node: object) -> Any:
     if result.get("type") == "object" and isinstance(properties, dict):
         result["additionalProperties"] = False
         result["required"] = list(properties)
+
+    # A node with its own `properties` map is a class-level node — the root
+    # object or a `$defs` entry — and that is exactly where pydantic put the
+    # model's docstring. A node without one (a scalar or enum property such as
+    # `properties.quote`) never carries class-bloat in the first place, so it
+    # is left alone even though it can legally have its own `description`.
+    if isinstance(properties, dict):
+        for keyword in _CLASS_LEVEL_BLOAT_KEYWORDS:
+            result.pop(keyword, None)
     return result
 
 

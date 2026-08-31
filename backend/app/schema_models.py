@@ -36,14 +36,20 @@ class CheckRequest(BaseModel):
         ...,
         description='Canonical URL of the article being checked. The cache key is sha256 of this string.',
     )
-    title: str = Field(..., description='Article headline as extracted from the page.')
+    title: str = Field(
+        ...,
+        description='Article headline as extracted from the page. Bounded well above any real headline; a longer string is rejected with 422 rather than stored or hashed.',
+        max_length=500,
+    )
     text: str = Field(
         ...,
-        description='Full extracted article body as plain text. Claim.start and Claim.end are character offsets into this string.',
+        description='Full extracted article body as plain text. Claim.start and Claim.end are character offsets into this string. Bounded to comfortably clear even a long feature or liveblog (60,000 characters is ~5x settings.max_article_chars, which truncates to 12,000 before extraction) while keeping an unauthenticated POST body — and the Redis cache entry built from it — bounded in size.',
+        max_length=60000,
     )
     install_id: str = Field(
         ...,
-        description='Anonymous per-install UUID from chrome.storage.local. Used only for the daily cap.',
+        description="Anonymous per-install UUID from chrome.storage.local (crypto.randomUUID(), 36 characters). Used only for the daily cap and folded into a Redis key, so it is bounded well above a UUID's length rather than to it exactly, in case the format ever changes shape.",
+        max_length=64,
     )
 
 

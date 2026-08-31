@@ -212,4 +212,8 @@ def _passage_from_dataset(dataset: Any) -> Passage | None:
         wire=False,
         origin="official",
         rating=None,
+        # Built entirely from data.gov.sg's own structured dataset fields
+        # (title, agency, notes) — never fetched-and-guessed — so this
+        # passage's text is verified by construction.
+        provenance_verified=True,
     )

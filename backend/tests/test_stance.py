@@ -17,9 +17,13 @@ What is covered, and why each one is here rather than left to review:
   shuffled answer, an out-of-range index and a repeated index all have to end
   with every stance on the passage it was written about. This is the failure
   mode worth the most tests: it is silent, it is confident, and it is wrong.
-* **A quote that is not in its passage forces ``neutral``.** Invented, empty, or
-  copied from a different passage — all three are the same failure, and the
-  stage must never manufacture support.
+* **A quote that is not in its passage forces ``neutral``.** Invented, empty,
+  too short to be a citation of anything, or copied from a different passage —
+  all four are the same failure, and the stage must never manufacture support.
+  The length floor matters beyond this stage: stance labels are exactly what
+  stage 5's rules count when deciding "two or more independent supporting
+  sources", so a one-character quote here is a fabricated vote in an
+  aggregation rule, not a cosmetic bug.
 * **An unusable answer is all-``neutral``; a provider failure is an exception.**
   "Nobody read the evidence" and "we never got an answer" are different facts,
   and only the caller can decide what a reader is told about the second.
@@ -54,12 +58,20 @@ from app.pipeline.providers.base import MAX_PASSAGE_CHARS
 from app.pipeline.stance import (
     CLAIM_CLOSE,
     CLAIM_OPEN,
+    MIN_CITED_SPAN_CHARS,
     PASSAGE_CLOSE,
     build_user_content,
     passage_open,
     score_passages,
+    verified_span,
 )
-from app.pipeline.types import ExtractedClaim, Passage, ScoredPassage, span_occurs_in
+from app.pipeline.types import (
+    ExtractedClaim,
+    Passage,
+    ScoredPassage,
+    normalize_for_match,
+    span_occurs_in,
+)
 from app.schema_models import Stance
 
 from .conftest import build_settings
@@ -389,6 +401,74 @@ async def test_an_empty_quote_cannot_carry_a_stance() -> None:
     )
 
     assert stances(scored) == [Stance.neutral, Stance.neutral, Stance.neutral]
+
+
+async def test_a_one_character_quote_cannot_carry_a_stance() -> None:
+    """The headline bug this file exists to close: no floor at all on the quote.
+
+    ``"4"`` really does occur in passage 1 — of nearly every passage ever
+    published — and a model that "quotes" it has established nothing about what
+    the passage says. Before :func:`~app.pipeline.stance.verified_span` existed,
+    :func:`~app.pipeline.types.span_occurs_in` was the *only* check run on
+    ``rationale_quote``, and it accepts any non-empty match — so a one-character
+    quote was enough to make a passage count as ``supports``, and stance labels
+    are exactly what stage 5's rules count when deciding "two or more
+    independent supporting sources". This is the regression test for that hole.
+    """
+    passages = fixture_passages()
+    assert span_occurs_in("4", passages[0].text), "the character really does occur"
+    client, _ = make_client(
+        [answer({"index": 1, "stance": "supports", "quote": "4"})]
+    )
+
+    scored = await score_passages(
+        fixture_claim(), passages, client=client, settings=stance_settings()
+    )
+
+    assert scored[0].stance is Stance.neutral, "a one-character quote proves nothing"
+    assert scored[0].rationale_quote == ""
+
+
+async def test_a_short_but_genuine_quote_still_forces_neutral() -> None:
+    """The same floor the judge applies, applied here: substance, not just presence.
+
+    ``"4 per cent"`` is genuinely in passage 1 and is ten characters — the exact
+    fragment ``tests/fixtures/judge/trivial_span.json`` proves is not a citation
+    of anything on the judge side. It costs something here too: a real answer is
+    downgraded to ``neutral``, and that is the safe direction — an abstention
+    stage 5 can see, never a vote for support built on a fragment.
+    """
+    passages = fixture_passages()
+    assert "4 per cent" in passages[0].text
+    assert len(normalize_for_match("4 per cent")) < MIN_CITED_SPAN_CHARS
+    client, _ = make_client(
+        [answer({"index": 1, "stance": "refutes", "quote": "4 per cent"})]
+    )
+
+    scored = await score_passages(
+        fixture_claim(), passages, client=client, settings=stance_settings()
+    )
+
+    assert scored[0].stance is Stance.neutral
+    assert scored[0].rationale_quote == ""
+
+
+async def test_verified_span_measures_the_floor_after_normalising() -> None:
+    """The same whitespace-padding hole the judge closes, closed here at the source.
+
+    ``verified_span`` lives in this module and :mod:`app.pipeline.judge` imports
+    it rather than reimplementing it, so this is where the property has to hold:
+    a span padded with extra internal spaces to eighteen raw characters, that
+    collapses to eleven the moment whitespace runs fold to one space for
+    matching, must not clear the floor just because it was long before folding.
+    """
+    padded = "40    per    cent"
+    passages = fixture_passages()
+    assert len(padded) >= MIN_CITED_SPAN_CHARS, "the raw span alone clears the floor"
+    assert len(normalize_for_match(padded)) < MIN_CITED_SPAN_CHARS, "normalised, it does not"
+    assert span_occurs_in(padded, passages[0].text), "and it is a real substring once folded"
+
+    assert verified_span(padded, passages[0].text) is None
 
 
 async def test_a_quote_from_beyond_the_truncation_is_not_believed() -> None:

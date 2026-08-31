@@ -61,9 +61,24 @@ from .conftest import build_settings
 FIXTURE_PATH = Path(__file__).parent / "fixtures" / "aggregate" / "passages.json"
 """``{_note, claim, article_url, sets, judgements}`` — see the directory's README."""
 
-PASSAGE_FIELDS = ("text", "url", "outlet", "date", "wire", "origin", "rating")
+PASSAGE_FIELDS = (
+    "text",
+    "url",
+    "outlet",
+    "date",
+    "wire",
+    "origin",
+    "rating",
+    "provenance_verified",
+)
 """The :class:`~app.pipeline.types.Passage` fields each fixture entry carries; the
-remaining two (``stance``, ``rationale_quote``) belong to the scored wrapper."""
+remaining two (``stance``, ``rationale_quote``) belong to the scored wrapper.
+
+``provenance_verified`` is set per entry to match the contract every provider
+is meant to honour: ``official``/``factcheck``/``cited_source`` passages are
+built from a structured API field or bytes fetched directly, so they are
+verified by construction; ``web``-origin passages are a model's free-form
+summary, so they are not (``app.pipeline.types.Passage``'s own docstring)."""
 
 
 # ---------------------------------------------------------------- fixtures
@@ -166,15 +181,31 @@ def test_two_independent_supporters_reach_supported(settings: Settings) -> None:
 
 
 def test_one_primary_source_alone_reaches_supported(settings: Settings) -> None:
-    """Rule 2, second half: one official dataset, with nothing else, is enough."""
-    payload = run("supported_primary", settings)
+    """Rule 2, second half: one government press release, with nothing else, is
+    enough -- a *genuine* primary document, not a dataset catalogue entry
+    (see :func:`test_a_dataset_catalogue_listing_alone_is_not_enough` below for
+    the M8 fix this deliberately distinguishes from)."""
+    payload = run("supported_primary_press_release", settings)
 
     assert payload["verdict"] == Verdict.supported.value
     assert len(payload["sources"]) == 1
-    assert payload["sources"][0]["outlet"] == "Hawker rentals dataset"
+    assert payload["sources"][0]["outlet"] == "National Environment Agency"
     # A single source, primary or not, is never a high-confidence answer, so the
     # judge's stated "high" is capped rather than believed.
     assert payload["confidence"] == Confidence.medium.value
+
+
+def test_a_dataset_catalogue_listing_alone_is_not_enough(settings: Settings) -> None:
+    """M8: data.gov.sg's own provider never reads a figure out of a dataset --
+    every passage it returns is a title, an agency name and a description, and
+    that is not "the original document that states the fact". A lone catalogue
+    entry must not reach ``supported`` on the strength of being on a
+    government-flavoured domain."""
+    payload = run("supported_primary", settings)
+
+    assert payload["verdict"] == UNVERIFIABLE
+    assert payload["sources"] == []
+    assert payload["confidence"] is None
 
 
 def test_one_ordinary_page_is_not_enough_to_support(settings: Settings) -> None:
@@ -193,22 +224,47 @@ def test_one_ordinary_page_is_not_enough_to_support(settings: Settings) -> None:
 
 
 def test_tiny_sample_makes_a_supported_claim_missing_context(settings: Settings) -> None:
-    """Rule 3: the figure is reported, but the survey behind it had 42 respondents.
+    """Rule 3: the figure is reported by two independent outlets, but the survey
+    behind it had 42 respondents. ``missing_context`` requires the same
+    strength ``supported`` would (M7 -- see
+    :func:`test_a_weak_uncorroborated_page_with_a_signal_is_unverifiable`
+    below for what happens with only one), so this fixture corroborates the
+    figure across two domains before the signal is checked.
 
-    The survey document is cited alongside the report — a reader cannot check
-    "small sample" without it — and keeps its real ``neutral`` stance.
+    The survey document is cited alongside the two reports — a reader cannot
+    check "small sample" without it — and keeps its real ``neutral`` stance.
     """
     payload = run("missing_context_small_sample", settings)
 
     assert payload["verdict"] == Verdict.missing_context.value
-    assert outlets(payload) == ["Hawker Sentiment Survey", "Island Wire"]
+    assert outlets(payload) == ["Hawker Sentiment Survey", "Island Wire", "Harbour Daily"]
     assert payload["evidence"] == (
-        "Island Wire backs this claim, but it rests on a very small sample."
+        "Island Wire and Harbour Daily back this claim, but it rests on a very small sample."
     )
     assert [source["stance"] for source in payload["sources"]] == [
         Stance.neutral.value,
         Stance.supports.value,
+        Stance.supports.value,
     ]
+
+
+def test_a_weak_uncorroborated_page_with_a_signal_is_unverifiable(settings: Settings) -> None:
+    """M7: ``side_strength``'s own docstring says weak (uncorroborated) evidence
+    "is never enough for supported or contradicted on its own"; a signal must
+    not lower that bar for ``missing_context`` either. One non-primary
+    supporting page, however clearly flagged, stays ``unverifiable``."""
+    passages = scored("missing_context_small_sample")
+    one_supporter_and_the_signal = [passages[0], passages[2]]  # Island Wire + the survey
+    payload = aggregate(
+        claim(),
+        one_supporter_and_the_signal,
+        judgement("missing_context_small_sample"),
+        article_url=ARTICLE_URL,
+        settings=settings,
+    )
+
+    assert payload["verdict"] == UNVERIFIABLE
+    assert payload["sources"] == []
 
 
 def test_outdated_support_is_missing_context(settings: Settings) -> None:
@@ -240,7 +296,13 @@ def test_a_fact_checkers_partly_true_rating_is_missing_context(settings: Setting
 
 
 def test_nothing_retrieved_is_unverifiable_with_an_explanation(settings: Settings) -> None:
-    """Rule 4: no passages at all — no sources, no confidence, still a trail."""
+    """Rule 4: no passages at all — no sources, no confidence, still a trail.
+
+    The explanation deliberately does not claim fact-check databases and the
+    web were specifically searched (M20): this stage cannot know whether
+    every provider actually ran or genuinely came back empty, and asserting a
+    search that may not have happened is exactly what rule 2 forbids.
+    """
     payload = aggregate(
         claim(),
         [],
@@ -252,9 +314,7 @@ def test_nothing_retrieved_is_unverifiable_with_an_explanation(settings: Setting
     assert payload["verdict"] == UNVERIFIABLE
     assert payload["sources"] == []
     assert payload["confidence"] is None
-    assert payload["evidence"] == (
-        "Searched fact-check databases and the web and found nothing that addresses this claim."
-    )
+    assert payload["evidence"] == "No evidence was found that addresses this claim."
     assert notes(payload)["Independent reports"] == "none found"
 
 
@@ -331,6 +391,94 @@ def test_aggregator_copy_and_the_article_itself_are_not_sources(settings: Settin
     assert "Example News" not in payload["evidence"]
 
 
+def test_two_subdomains_of_one_publisher_are_one_independent_source() -> None:
+    """M3: independence is keyed on the *registrable* domain, so
+    ``news.example.com`` and ``shop.example.com`` collapse to one source —
+    the raw host used to treat them as two (a redteam finding)."""
+    first, second = scored("supported_independent")
+    subdomains = [
+        replace(first, passage=replace(first.passage, url="https://news.hawker-media.test/a")),
+        replace(second, passage=replace(second.passage, url="https://shop.hawker-media.test/b")),
+    ]
+    assert len({source_group(item.passage) for item in subdomains}) == 1
+    assert side_strength(subdomains, refutation=False) == 1
+
+
+def test_a_sibling_page_on_the_articles_own_site_is_not_evidence(settings: Settings) -> None:
+    """B3 (BLOCKER): an article links to another page on its own site. Even
+    though the cited-source provider fetched it and it plainly supports the
+    claim, a publisher cannot corroborate itself: it is dropped before it can
+    be counted as primary or as an independent source at all, so the claim
+    stays ``unverifiable`` -- even though the judge (in this fixture) called
+    it ``supported``, because the rules may only be weakened by the judge,
+    never overruled by one that tries to strengthen an abstention."""
+    payload = run("self_site_citation", settings)
+
+    assert payload["verdict"] == UNVERIFIABLE
+    assert payload["sources"] == []
+    assert payload["confidence"] is None
+    assert "Example News" not in payload["evidence"]
+
+
+def test_same_page_under_a_tracking_parameter_is_still_the_article(settings: Settings) -> None:
+    """B4: the self-citation guard now uses the canonical
+    ``providers.base.same_page``, which survives a tracking parameter, a
+    ``www.`` prefix, a scheme change or a trailing slash -- none of which the
+    old raw-string comparison did (see ``tests/test_types.py`` for the pinned
+    demonstration of the old bug still living in :func:`app.pipeline.aggregate._url_key`)."""
+    passages = scored("aggregator_and_self")
+    self_citation = passages[1]  # the article, verbatim, in the fixture
+    tracked = replace(
+        self_citation,
+        passage=replace(
+            self_citation.passage,
+            url=f"{self_citation.passage.url}?utm_source=share",
+        ),
+    )
+    payload = aggregate(
+        claim(),
+        [tracked, passages[2]],  # the tracked self-citation, plus one real report
+        judgement("aggregator_and_self"),
+        article_url=ARTICLE_URL,
+        settings=settings,
+    )
+
+    assert payload["verdict"] == UNVERIFIABLE
+    assert "Example News" not in payload["evidence"]
+
+
+def test_an_unverified_primary_passage_cannot_alone_decide(settings: Settings) -> None:
+    """A single passage deciding a verdict alone (a primary source, or a
+    ClaimReview refuting the claim) must have text confirmed to really appear
+    on the page it names. An otherwise-primary government page whose text is
+    only a model's unverified summary informs but does not, alone, decide."""
+    primary = scored("supported_primary_press_release")[0]
+    unverified = replace(primary, passage=replace(primary.passage, provenance_verified=False))
+
+    assert side_strength([unverified], refutation=False) == 1
+
+    payload = aggregate(
+        claim(),
+        [unverified],
+        judgement("supported_primary_press_release"),
+        article_url=ARTICLE_URL,
+        settings=settings,
+    )
+    assert payload["verdict"] == UNVERIFIABLE
+    assert payload["sources"] == []
+
+
+def test_two_unverified_independent_sources_can_still_decide(settings: Settings) -> None:
+    """The corroboration path is not gated on ``provenance_verified`` -- two
+    unverified but independent web-search passages agreeing is itself the
+    safeguard, and today's web-search provider never sets this field at all,
+    so gating this path too would make ``supported`` unreachable by ordinary
+    reporting."""
+    passages = scored("supported_independent")
+    assert all(not item.passage.provenance_verified for item in passages)
+    assert side_strength(passages, refutation=False) == 2
+
+
 # ---------------------------------------------------------------- the judge
 
 
@@ -378,6 +526,48 @@ def test_a_judge_verdict_outside_the_vocabulary_is_not_a_verdict(settings: Setti
 
     assert payload["verdict"] == UNVERIFIABLE
     assert payload["sources"] == []
+
+
+def test_a_tied_refutation_does_not_soften_to_missing_context(settings: Settings) -> None:
+    """B2 (BLOCKER): a ClaimReview rated "False" (a strong refutation) ties
+    against two independent supporting pages, one of which is self-selected
+    (a missing-context signal). The old code checked ``missing_context``
+    before the tie, so it fell through to the friendlier verdict and silently
+    dropped the refuting source; the fix checks the tie first, so this stays
+    ``unverifiable`` and the refutation is not thrown away."""
+    payload = run("conflict_with_signal", settings)
+
+    assert payload["verdict"] == UNVERIFIABLE
+    assert payload["sources"] == []
+    assert payload["confidence"] is None
+    assert "Fact Check Desk" in payload["evidence"]
+
+
+def test_same_outlet_on_both_sides_uses_singular_conflict_grammar(settings: Settings) -> None:
+    """M16: a genuine tie can still name only one outlet -- the same board
+    contradicting itself across two releases -- and "X disagree" is
+    ungrammatical when X is one name."""
+    payload = run("single_outlet_conflict", settings)
+
+    assert payload["verdict"] == UNVERIFIABLE
+    assert notes(payload)["This article"] == "published on example-news.test"
+    assert payload["evidence"] == (
+        "Hawker Centres Board published evidence on both sides of this claim, "
+        "so it is left unresolved."
+    )
+    assert "disagree" not in payload["evidence"]
+
+
+def test_an_invalid_judge_verdict_is_not_reported_as_a_conflict(settings: Settings) -> None:
+    """M16: the judge returning something outside the four verdicts is the
+    judge saying nothing usable, not the sources disagreeing -- the old reason
+    logic said "disagree" whenever the rules alone had reached a decided
+    verdict, regardless of why the judge's answer was discarded."""
+    payload = run("supported_independent", settings, verdict="TRUE")
+
+    assert payload["verdict"] == UNVERIFIABLE
+    assert "disagree" not in payload["evidence"]
+    assert "nothing found there settles this claim" in payload["evidence"]
 
 
 def test_a_fabricated_citation_downgrades_the_claim(settings: Settings) -> None:
@@ -473,6 +663,145 @@ def test_unverifiable_evidence_names_what_was_checked(settings: Settings) -> Non
     assert "Harbour Post" in payload["evidence"]
 
 
+def test_nothing_retrieved_does_not_claim_a_search_that_may_not_have_happened(
+    settings: Settings,
+) -> None:
+    """M20: this stage cannot know whether every provider actually ran (one can
+    be unconfigured, or every call can have failed) or genuinely came back
+    empty, so the "nothing retrieved" sentence must not assert that fact-check
+    databases and the web were specifically searched -- only that no evidence
+    was found."""
+    payload = aggregate(
+        claim(),
+        [],
+        judgement("contradicted"),
+        article_url=ARTICLE_URL,
+        settings=settings,
+    )
+
+    assert payload["evidence"] == "No evidence was found that addresses this claim."
+    assert "search" not in payload["evidence"].lower()
+
+
+def test_stance_mismatched_source_is_never_described_as_backing_the_claim(
+    settings: Settings,
+) -> None:
+    """M5: the per-claim cap can strand only a *refuting* source in ``sources``
+    (``missing_context``'s ``relied`` always includes refuting evidence, and a
+    weak fact-check outranks ordinary web reports in the source-chip
+    ordering). The old fallback named it as "backing" the claim whenever no
+    kept source matched the wanted stance; the fix never mislabels a source's
+    stance, composing a sentence that names no direction at all instead."""
+    capped = build_settings(max_passages_per_claim=1)
+    payload = run("stance_mismatch_cap", capped)
+
+    assert payload["verdict"] == Verdict.missing_context.value
+    assert len(payload["sources"]) == 1
+    assert payload["sources"][0]["stance"] == Stance.refutes.value
+    assert payload["evidence"] == (
+        "The evidence found does not settle this claim, and it rests on a very small sample."
+    )
+    assert "Fact Check Desk" not in payload["evidence"]
+    assert "backs this claim" not in payload["evidence"]
+
+
+def test_a_foreign_verdict_word_never_reaches_the_reader_verbatim(settings: Settings) -> None:
+    """M6/M18/M19 (BLOCKER-adjacent): the judge's own sentence can legitimately
+    quote a passage that itself contains a ClaimReview's rating -- "FALSE",
+    "pants on fire" -- without fabricating anything. That sentence must still
+    never reach a reader looking like it is Re-Vera's own judgement; the four
+    verdicts are supported/contradicted/missing_context/unverifiable and none
+    of them is spelled like a tabloid rating."""
+    payload = run(
+        "contradicted",
+        settings,
+        evidence='Hawker Centres Board says this is FALSE, not the 40 per cent figure.',
+    )
+
+    assert "FALSE" not in payload["evidence"]
+    assert payload["evidence"] == (
+        "Hawker Centres Board, Island Wire and Harbour Post contradict this claim."
+    )
+
+
+def test_outlet_text_is_sanitised_before_it_reaches_a_reader(settings: Settings) -> None:
+    """M6/M18/M19: an outlet name is third-party text, up to 120 characters, and
+    is never interpolated raw -- control characters and newlines are stripped
+    and the length is re-bounded here regardless of what a provider already
+    enforced."""
+    passages = scored("contradicted")
+    hostile_outlet = "Hawker\x07 Centres\nBoard" + ("!" * 200)
+    hostile = replace(
+        passages[0], passage=replace(passages[0].passage, outlet=hostile_outlet)
+    )
+    payload = aggregate(
+        claim(),
+        [hostile, *passages[1:]],
+        judgement("contradicted"),
+        article_url=ARTICLE_URL,
+        settings=settings,
+    )
+
+    shown = payload["sources"][0]["outlet"]
+    assert "\x07" not in shown
+    assert "\n" not in shown
+    assert len(shown) <= 120
+
+
+def test_a_short_outlet_name_does_not_match_by_accident(settings: Settings) -> None:
+    """M17: the outlet-mentioned gate is a word-boundary match, not the old raw
+    substring test -- a short outlet name like "AP" must not count as
+    "mentioned" merely because it appears inside an unrelated word ("tap")."""
+    ap_claim = ExtractedClaim(
+        id="c1",
+        quote="rise by 40% from 1 January",
+        start=60,
+        end=86,
+        kind="numeric",
+        checkworthiness=0.9,
+    )
+    ap_passage = Passage(
+        text=(
+            "The board's tap water notice confirms the true adjustment is "
+            "4 per cent, not 40."
+        ),
+        url="https://www.moh.gov.sg/press/ap-report",
+        outlet="AP",
+        date="2026-03-12",
+        wire=False,
+        origin="official",
+        rating=None,
+        provenance_verified=True,
+    )
+    scored_ap = [
+        ScoredPassage(
+            passage=ap_passage,
+            stance=Stance.refutes,
+            rationale_quote="true adjustment is 4 per cent",
+        )
+    ]
+    judgement_ap = Judgement(
+        verdict="contradicted",
+        confidence="high",
+        evidence="The tap water notice confirms this is wrong.",
+        cited_spans=["true adjustment is 4 per cent"],
+    )
+
+    payload = aggregate(
+        ap_claim,
+        scored_ap,
+        judgement_ap,
+        article_url="https://example-news.test/unrelated-article",
+        settings=settings,
+    )
+
+    assert payload["verdict"] == Verdict.contradicted.value
+    # The judge sentence never actually names "AP" as a word (only "tap"), so
+    # the raw substring match the old gate used would have accepted it; the
+    # word-boundary gate must reject it and compose a sentence instead.
+    assert payload["evidence"] == "AP contradicts this claim."
+
+
 # ---------------------------------------------------------------- sources
 
 
@@ -535,10 +864,10 @@ def test_a_claim_with_no_primary_source_has_no_original_source_node(
 
 
 def test_a_claim_resting_only_on_a_primary_source_says_so(settings: Settings) -> None:
-    payload = run("supported_primary", settings)
+    payload = run("supported_primary_press_release", settings)
 
     assert [node["label"] for node in payload["trail"]] == ["This article", "Original source"]
-    assert notes(payload)["Original source"] == "Hawker rentals dataset, 1 Apr"
+    assert notes(payload)["Original source"] == "National Environment Agency, 1 Apr"
 
 
 def test_an_unverifiable_claim_still_gets_a_trail(settings: Settings) -> None:
@@ -647,15 +976,47 @@ def test_no_verdict_vocabulary_leaks_from_a_rating_or_a_judgement(
 
 
 def test_primary_means_the_document_itself() -> None:
-    """Official data, a fetched citation, and government domains — nothing else."""
+    """A government domain — nothing else, and never merely a subdomain label
+    an attacker can spoof."""
     official, report, wire_copy = (item.passage for item in scored("contradicted"))
 
     assert is_primary(official)
     assert not is_primary(report)
     assert not is_primary(wire_copy)
-    assert is_primary(scored("missing_context_small_sample")[1].passage)
     assert not is_primary(replace(official, origin="web", url="https://government-news.example/x"))
-    assert is_primary(replace(report, url="https://data.gov.sg/datasets/rentals"))
+    assert is_primary(replace(report, url="https://www.moh.gov.sg/press-releases/rentals"))
+    # A hostile subdomain crafted to smuggle the word "gov" in must not count:
+    # the registrable domain of "gov.sg.evil.com" is "evil.com".
+    assert not is_primary(replace(report, url="https://gov.sg.evil.com/press-releases/rentals"))
+
+
+def test_a_dataset_catalogue_domain_is_never_primary() -> None:
+    """M8/M21/M22: data.gov.sg is a government-flavoured domain, but its only
+    provider (``app.pipeline.providers.official``) never reads a figure out of
+    a dataset -- every passage it returns is a title, an agency name and a
+    description. Treating "on a .gov.sg domain" as sufficient would make every
+    catalogue listing primary; the domain carve-out stops that specifically,
+    without weakening the government-domain check for anything else."""
+    catalogue = scored("supported_primary")[0].passage
+    assert catalogue.origin == "official"
+    assert not is_primary(catalogue)
+    assert not is_primary(replace(catalogue, url="https://data.gov.sg/datasets/anything"))
+    # A genuine agency press release, not on the catalogue domain, still counts.
+    assert is_primary(replace(catalogue, url="https://www.nea.gov.sg/press/anything"))
+
+
+def test_cited_source_is_primary_only_for_attribution_claims() -> None:
+    """B3: a fetched citation only answers "does the document say what the
+    article says it says" -- narrow to attribution claims, never a
+    general-purpose primary source for a numeric or general claim that
+    happens to link somewhere (the second half of B3's fix, and the reason
+    for the ``claim_kind`` keyword)."""
+    survey = scored("missing_context_small_sample")[-1].passage
+    assert survey.origin == "cited_source"
+
+    assert is_primary(survey, claim_kind="attribution")
+    assert not is_primary(survey, claim_kind="numeric")
+    assert not is_primary(survey)  # default claim_kind is never "attribution"
 
 
 def test_credibility_is_about_provenance_not_brand() -> None:
@@ -688,15 +1049,20 @@ def test_detect_signals_reads_the_passages_not_the_judgement() -> None:
     assert detect_signals(scored("missing_context_outdated")) == [
         "more recent material has since been published"
     ]
+    # M6/M18/M19: the fact-checker's own rating word is never quoted verbatim
+    # in Re-Vera's copy -- the signal is Re-Vera's own phrase, attributed to
+    # the fact-checker by name, so a rating like "FALSE" or "pants on fire"
+    # can never ride through this clause onto a reader's screen.
     assert detect_signals(scored("missing_context_rating")) == [
-        'a fact-checker rated it "Partly true"'
+        "Fact Check Desk rated it only partly true"
     ]
     assert detect_signals(scored("contradicted")) == []
 
 
 def test_a_large_sample_is_not_a_signal() -> None:
     """The tiny-sample regex must not fire on an ordinary, adequately sized survey."""
-    survey = scored("missing_context_small_sample")[1]
+    survey = scored("missing_context_small_sample")[-1]  # the survey document
+    assert survey.passage.origin == "cited_source"
     big = replace(
         survey,
         passage=replace(

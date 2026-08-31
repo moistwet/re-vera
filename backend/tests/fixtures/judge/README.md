@@ -31,6 +31,7 @@ to the two rules a claim cannot reach the wire without.
 | `mixed_spans.json` | One real span and one invented one. | Downgraded: verification is all-or-nothing. |
 | `stitched_span.json` | A span running from the end of passage 1 into the start of passage 2. | Downgraded: spans are checked per passage, never against the concatenation. |
 | `trivial_span.json` | `4 per cent` — genuinely in passage 1, and ten characters. | Downgraded: under `MIN_CITED_SPAN_CHARS`. |
+| `whitespace_padded_span.json` | `40    per    cent` — seventeen raw characters (over the floor unnormalised) that collapse to eleven (`40 per cent`, under it) once whitespace runs fold to one space. | Downgraded: the floor is measured on the normalised string, so padding cannot buy a short fragment past it. |
 | `unknown_verdict.json` | A fifth verdict, `false`. | Downgraded. |
 | `bad_confidence.json` | Confidence `87%`. | Downgraded (rule 3: never a percentage). |
 | `null_confidence.json` | A decided verdict with a null confidence. | Downgraded (the iff-rule, other way round). |

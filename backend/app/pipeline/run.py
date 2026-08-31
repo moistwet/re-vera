@@ -20,23 +20,33 @@ owes the stream, in order:
 4. ``done`` with the per-verdict tally — or ``error``, so a reader waiting on
    the stream is never left hanging.
 
-**One claim failing is not a failed job.** Retrieval already refuses to raise,
-and stages 3 and 4 turn a malformed model answer into an honest abstention by
-themselves; what still reaches here is the deployment being wrong (a bad key, a
-model this account cannot call, a provider outage) or a bug. Any of those is
-caught per claim, published as ``unverifiable`` with an evidence sentence that
-says the check did not finish, and the run carries on. Only a failure *before*
-the claims are known — extraction itself, or a missing key — ends the job with
-``error``.
+**One claim failing is not a failed job.** Retrieval itself still never raises
+(:func:`~app.pipeline.retrieve.retrieve_passages`, per its own docstring), and
+stages 3 and 4 turn a malformed model answer into an honest abstention by
+themselves; what still reaches here is retrieval coming back *broken* rather
+than empty (:attr:`~app.pipeline.retrieve.RetrievalOutcome.retrieval_broken` —
+:func:`check_claim` raises :class:`RetrievalFailedError` for that), the
+deployment being wrong (a bad key, a model this account cannot call), or a bug.
+Any of those is caught per claim, published as ``unverifiable`` with an
+evidence sentence that says the check did not finish, and the run carries on.
+Only a failure *before* the claims are known — extraction itself, or a missing
+key — ends the job with ``error``.
 
 Two decisions worth knowing, both about honesty rather than mechanism:
 
-* **A run with a failed claim is not cached.** Everything else is: the cache is
-  written before ``done`` exactly as the contract says. But an entry lives for
-  seven days and is served to every later reader of that URL without re-running
-  anything, so freezing "the provider was down for ten seconds" into it would
-  charge every subsequent reader for one outage — the same trap
-  ``usable_cache_entry`` exists to get out of. We cache results, not outages.
+* **A run in which nothing succeeded is not cached; a run with only some
+  claims failing is.** (BLOCKER B5, MAJOR M14 — see :class:`_ClaimBatch` and
+  :attr:`_ClaimBatch.cacheable` for the reasoning in full.) An entry lives for
+  seven days and is served to every later reader of that URL without
+  re-running anything, so freezing a total outage into it — "the search
+  provider's key is bad, so every claim came back honestly unable to check
+  itself" — would tell every subsequent reader the same false-feeling nothing
+  for a week. But a *partial* failure — six claims judged normally, one lost
+  to a flaky provider or a stage bug — has real value in the other six, and
+  refusing to cache it would re-buy that evidence for every reader until the
+  URL happens to check clean, which is a bigger and more common cost than the
+  one honest abstention it protects. We cache results with real work in them,
+  never a run that produced nothing but abstentions.
 * **The mock is never a fallback.** ``settings.use_mock_pipeline`` selects it
   deliberately; the real pipeline failing publishes an error instead of quietly
   streaming fixture verdicts for somebody's actual article, which a reader would
@@ -78,6 +88,7 @@ __all__ = [
     "FAILED_CLAIM_EVIDENCE",
     "LLMMeter",
     "PipelineDeps",
+    "RetrievalFailedError",
     "check_claim",
     "claims_found_payload",
     "run_pipeline",
@@ -104,8 +115,34 @@ FAILED_CLAIM_EVIDENCE = (
 
 Rule 2 requires an ``unverifiable`` claim to explain what was searched and not
 found. When the search itself broke, the honest explanation is that it broke —
-not a sentence implying we looked and the web was empty.
+not a sentence implying we looked and the web was empty. This is exactly the
+wording BLOCKER B5 asks for: it never claims a completed search, which is what
+made the previous, silently-swallowed failure mode possible in the first
+place — see :class:`RetrievalFailedError`.
 """
+
+
+class RetrievalFailedError(RuntimeError):
+    """Raised by :func:`check_claim` when retrieval for a claim is *broken*, not empty.
+
+    See :attr:`~app.pipeline.retrieve.RetrievalOutcome.retrieval_broken`: every
+    provider actually consulted for this claim raised, timed out, or returned
+    garbage, and nothing was retrieved. That is not "the web has nothing on
+    this" — it is "the search did not happen" — and BLOCKER B5 is exactly the
+    bug this distinction exists to close: before it, a total provider outage
+    (an expired key, a wrong tool name, a quota block) was silently reported to
+    a reader as a completed, empty search, and the resulting all-``unverifiable``
+    run was written to the 7-day cache as if it were a real answer.
+
+    A distinct type rather than reusing an existing one so that it stays
+    recognisable through ``_check_claims.work``'s ``except Exception`` (which
+    catches it exactly like any other stage failure and publishes the same
+    honest :data:`FAILED_CLAIM_EVIDENCE` abstention) and through
+    :func:`_safe_reason` (so an operator's log line names which providers
+    failed, not just "RetrievalFailedError"). The message names only provider
+    labels (``"fact-check"``, ``"web-search"``, …) and the claim id — never
+    article text, a quote or a URL (``CLAUDE.md`` rule 6).
+    """
 
 
 @dataclass(slots=True)
@@ -193,12 +230,30 @@ class PipelineDeps:
     ``owned_http`` is the HTTP client :meth:`build` opened and this object must
     therefore close. A caller that passes its own client keeps it None and closes
     its own.
+
+    ``owned_openai_client`` is the same idea for the LLM side (MAJOR M12): every
+    job built production dependencies without this used to leak one
+    ``openai.AsyncOpenAI`` and its connection pool, because only ``owned_http``
+    was ever closed. Typed ``Any`` rather than ``openai.AsyncOpenAI`` on
+    purpose — this repository's rule that only :mod:`app.llm` imports the
+    OpenAI SDK (``tests/test_llm.py::test_only_the_llm_module_imports_the_openai_sdk``)
+    would otherwise be broken by this module needing the symbol just to type a
+    field. :mod:`app.llm` does not expose a way to close what
+    :func:`~app.llm.build_openai_transport` opens
+    (:class:`~app.llm.OpenAIChatTransport` has no ``aclose``/``close``), so
+    :meth:`build` reaches into its private ``_client`` once, at construction
+    time, rather than leaking the client for the life of the process. This is a
+    workaround, not the fix: ``app.llm`` should grow a public way to close what
+    it opens, and :meth:`aclose` here should be simplified once it does — noted
+    in this milestone's interface notes since ``app/llm.py`` is outside this
+    module's owned files.
     """
 
     llm: LLMClient
     providers: Providers
     meter: LLMMeter | None = None
     owned_http: HttpxClient | None = None
+    owned_openai_client: Any | None = None
 
     @classmethod
     def build(cls, settings: Settings) -> PipelineDeps:
@@ -212,30 +267,59 @@ class PipelineDeps:
         :func:`~app.pipeline.retrieve.build_providers` catches it and every claim
         falls through to web search, which is correct and more expensive.
 
-        The returned object owns an HTTP client; call :meth:`aclose` when the job
-        ends.
+        The returned object owns an HTTP client and an OpenAI client; call
+        :meth:`aclose` when the job ends.
         """
         api_key = settings.require_openai_api_key("the claim-checking pipeline")
         meter = LLMMeter()
         http = HttpxClient()
+        raw_transport = build_openai_transport(api_key, settings.llm_timeout_seconds)
         return cls(
             llm=LLMClient(
                 api_key=api_key,
                 timeout=settings.llm_timeout_seconds,
                 max_retries=settings.llm_max_retries,
-                transport=meter.instrument(
-                    build_openai_transport(api_key, settings.llm_timeout_seconds)
-                ),
+                transport=meter.instrument(raw_transport),
             ),
             providers=build_providers(settings, http=http),
             meter=meter,
             owned_http=http,
+            # See the class docstring: reaching into a private attribute
+            # because app.llm exposes no public way to get the client back out
+            # of the transport it just built, or to close it.
+            owned_openai_client=getattr(raw_transport, "_client", None),
         )
 
     async def aclose(self) -> None:
-        """Close whatever this object opened. A no-op for injected dependencies."""
+        """Close whatever this object opened. A no-op for injected dependencies.
+
+        Both clients are closed even if one of them errors — a fake client
+        raising on close in a test must never leave the real HTTP pool open,
+        and vice versa — and neither ever raises out of here: this runs from
+        ``run_pipeline``'s ``finally`` (MAJOR M12: "on every path, including
+        the error path and cancellation"), where an exception would either
+        mask whichever failure the job is already reporting or, if none is in
+        flight, escape the pipeline entirely and leave the reader's stream
+        exactly as hung as an unclosed connection pool would. Cancellation
+        itself is the one thing still allowed through, so a shutdown is not
+        blocked waiting on a socket that will not close.
+        """
         if self.owned_http is not None:
-            await self.owned_http.aclose()
+            try:
+                await self.owned_http.aclose()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.warning("failed to close the HTTP client cleanly", exc_info=True)
+        if self.owned_openai_client is not None:
+            close = getattr(self.owned_openai_client, "close", None)
+            if callable(close):
+                try:
+                    await close()
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    logger.warning("failed to close the OpenAI client cleanly", exc_info=True)
 
 
 async def run_pipeline(
@@ -267,25 +351,38 @@ async def run_pipeline(
         claims = await extract_claims(request.text, client=deps.llm, settings=settings)
         await publish_event(redis, job_id, "claims_found", claims_found_payload(claims))
 
-        results, complete = await _check_claims(
+        batch = await _check_claims(
             redis, job_id, claims, request=request, settings=settings, deps=deps
         )
 
-        counts = tally(results)
+        counts = tally(batch.results)
         checked_at = _now_iso()
-        if complete:
+        if batch.cacheable:
             await set_check(
                 redis,
                 # AnyUrl normalises, so hash the string form — the cache read in
                 # `start_check` and this write must agree on one spelling.
                 str(request.url),
-                {"claims": results, "counts": counts, "checked_at": checked_at},
+                {"claims": batch.results, "counts": counts, "checked_at": checked_at},
             )
+            if batch.ok_count < batch.total:
+                logger.info(
+                    "job %s: cached despite %d/%d claim(s) failing — the rest is real "
+                    "evidence, and one idiosyncratic failure should not force every claim "
+                    "to be re-bought on the next reader's visit (MAJOR M14)",
+                    job_id,
+                    batch.total - batch.ok_count,
+                    batch.total,
+                )
         else:
             logger.info(
-                "job %s: not cached — at least one claim's check failed, and a "
-                "seven-day entry would serve that failure to every later reader",
+                "job %s: not cached — every claim's check failed (%d/%d); a seven-day "
+                "entry made entirely of abstentions looks like a real answer but is "
+                "almost certainly an outage, and would serve that outage to every later "
+                "reader (BLOCKER B5)",
                 job_id,
+                batch.total - batch.ok_count,
+                batch.total,
             )
         await publish_event(redis, job_id, "done", done_payload(counts, checked_at))
     except asyncio.CancelledError:
@@ -321,18 +418,35 @@ async def check_claim(
 ) -> dict[str, Any]:
     """Run stages 2 to 5 for one claim and return the wire-ready claim dict.
 
-    Retrieval never raises and both model stages already turn an unusable answer
-    into an abstention, so what escapes this function is the deployment being
-    wrong or a bug — see :func:`unverifiable_claim`, which is where those land.
+    Retrieval never raises, and both model stages already turn an unusable
+    answer into an abstention, so what escapes this function is retrieval
+    coming back *broken* (:class:`RetrievalFailedError`, when
+    :attr:`~app.pipeline.retrieve.RetrievalOutcome.retrieval_broken` is true —
+    BLOCKER B5), the deployment being wrong, or a bug — see
+    :func:`unverifiable_claim`, which is where all of those land.
 
     No passages means no model calls: stage 3 returns an empty list and stage 4
     answers ``unverifiable`` without asking anyone, so a claim the web has
-    nothing on costs one retrieval and no tokens.
+    nothing on costs one retrieval and no tokens. A claim whose retrieval is
+    broken costs even less: it never reaches stage 3 at all.
     """
-    passages = await retrieve_passages(
+    outcome = await retrieve_passages(
         claim, article_url=article_url, providers=deps.providers, settings=settings
     )
-    scored = await score_passages(claim, passages, client=deps.llm, settings=settings)
+    if outcome.retrieval_broken:
+        # Every provider we actually asked about this claim failed outright —
+        # not "the web has nothing", but "the search did not happen". Raising
+        # here (rather than letting an empty passage list flow into an honest
+        # "nothing found" verdict) is BLOCKER B5's fix: it is caught the same
+        # way every other stage failure is, in `_check_claims.work`, which
+        # marks the claim `ok=False` and publishes it with wording that says
+        # the search did not finish rather than that it finished and found
+        # nothing.
+        raise RetrievalFailedError(
+            f"claim {claim.id}: every provider consulted failed "
+            f"({', '.join(outcome.providers_failed)}); nothing was retrieved"
+        )
+    scored = await score_passages(claim, outcome.passages, client=deps.llm, settings=settings)
     judgement = await judge_claim(claim, scored, client=deps.llm, settings=settings)
     return aggregate(claim, scored, judgement, article_url=article_url, settings=settings)
 
@@ -362,6 +476,50 @@ def unverifiable_claim(claim: ExtractedClaim, *, article_url: str) -> dict[str, 
     return payload
 
 
+@dataclass(frozen=True, slots=True)
+class _ClaimBatch:
+    """What one job's fan-out over its claims produced, and whether it should be cached.
+
+    ``results`` is every claim, already validated and published, **in article
+    order** — the order they are cached and replayed in, which is what makes a
+    cache hit render identically to the live run that produced it. The events
+    themselves went out in whatever order the claims finished in; that is the
+    point of doing this concurrently at all.
+    """
+
+    results: list[dict[str, Any]]
+    ok_count: int
+    total: int
+
+    @property
+    def cacheable(self) -> bool:
+        """Whether this run belongs in the 7-day cache. See BLOCKER B5 and MAJOR M14.
+
+        **Never cache a run in which nothing succeeded.** For a non-empty claim
+        list, ``ok_count == 0`` means every claim ended in a failure — whatever
+        mix of reasons produced them, a result made entirely of "could not be
+        checked" claims is indistinguishable from "the pipeline itself is
+        broken right now" (a bad key, an outage, a bug hit on every claim), and
+        freezing that for seven days is exactly BLOCKER B5's trap: the next
+        reader of the URL is told the same failure as if it were a real,
+        completed answer.
+
+        **Cache whenever at least one claim genuinely succeeded.** The run then
+        has real value — real evidence, a real verdict — for most of its
+        claims, and MAJOR M14 is precisely the demand that one idiosyncratic
+        failure (a flaky provider on one query, a stage bug on one claim) must
+        not force every other claim's evidence to be re-bought on the next
+        reader's visit. The failed claim is cached too, honestly reporting that
+        it could not be checked (:data:`FAILED_CLAIM_EVIDENCE`) — which can go
+        stale before the next attempt, but is never false, so caching it is the
+        safe direction this reconciliation asks for.
+
+        An empty claim list (nothing to check) is trivially cacheable — there
+        is nothing that could have failed.
+        """
+        return self.total == 0 or self.ok_count > 0
+
+
 async def _check_claims(
     redis: Redis,
     job_id: str,
@@ -370,21 +528,19 @@ async def _check_claims(
     request: CheckRequest,
     settings: Settings,
     deps: PipelineDeps,
-) -> tuple[list[dict[str, Any]], bool]:
+) -> _ClaimBatch:
     """Work every claim concurrently, publishing each as it resolves.
 
-    Returns the finished claims **in article order** — the order they are cached
-    and replayed in, which is what makes a cache hit render identically to the
-    live run that produced it — and whether every one of them completed. The
-    events themselves went out in whatever order the claims finished in, which is
-    the point of doing this concurrently at all.
+    Returns a :class:`_ClaimBatch` holding the finished claims **in article
+    order** and how many of them succeeded, which is what
+    :attr:`_ClaimBatch.cacheable` needs to decide the run's caching policy.
 
     Concurrency is bounded because ``max_claims`` claims, each fanning out to
     several providers and two model calls, all launched at once would hit
     provider rate limits and let one reader's check starve everyone else's.
     """
     if not claims:
-        return [], True
+        return _ClaimBatch(results=[], ok_count=0, total=0)
 
     limit = settings.pipeline_concurrency
     if limit < 1:
@@ -432,7 +588,11 @@ async def _check_claims(
     async with asyncio.TaskGroup() as group:
         tasks = [group.create_task(work(claim)) for claim in claims]
     finished = [task.result() for task in tasks]
-    return [payload for payload, _ in finished], all(ok for _, ok in finished)
+    return _ClaimBatch(
+        results=[payload for payload, _ in finished],
+        ok_count=sum(1 for _, ok in finished if ok),
+        total=len(finished),
+    )
 
 
 def _log_totals(
@@ -468,11 +628,15 @@ def _safe_reason(exc: BaseException) -> str:
     """Describe ``exc`` for a log line without risking untrusted content in it.
 
     The failures this pipeline expects — :class:`~app.llm.LLMError` and its
-    subclasses, :class:`~app.config.MissingSettingError` — write their own
-    messages out of the model id, the status code, the schema name and the
-    environment variable, and each says so in its docstring. Those are exactly
-    what an operator needs on the first live run ("provider returned 404"), and
-    they carry no article text, so they are quoted in full.
+    subclasses, :class:`~app.config.MissingSettingError`,
+    :class:`RetrievalFailedError` — write their own messages out of the model
+    id, the status code, the schema name, the environment variable, or (for
+    :class:`RetrievalFailedError`) the claim id and the provider names that
+    failed, and each says so in its docstring. Those are exactly what an
+    operator needs on the first live run ("provider returned 404", or "every
+    provider consulted failed (fact-check, web-search)" — the shape a
+    misconfigured key takes, per BLOCKER B5), and they carry no article text,
+    so they are quoted in full.
 
     Anything else is reported by class name only, and no traceback is logged.
     An unexpected exception here is most likely a ``ValidationError``, whose
@@ -486,7 +650,7 @@ def _safe_reason(exc: BaseException) -> str:
     """
     if isinstance(exc, BaseExceptionGroup) and len(exc.exceptions) == 1:
         return _safe_reason(exc.exceptions[0])
-    if isinstance(exc, LLMError | MissingSettingError):
+    if isinstance(exc, LLMError | MissingSettingError | RetrievalFailedError):
         return f"{type(exc).__name__}: {exc}"
     return type(exc).__name__
 
