@@ -3,13 +3,26 @@
 Every event a job produces is written twice — appended to the list
 ``job:{job_id}:events`` (what a late or reconnecting client replays) and
 published on the channel ``job:{job_id}`` (what a connected client follows).
-Both carry the same JSON record::
+The published record carries its sequence number explicitly::
 
     {"seq": 3, "event": "claim", "data": {...}}
 
 ``seq`` is 1-based and gap-free, so a client that replays the list and then
 follows the channel can drop anything it has already seen. The SSE layer copies
 it into the ``id:`` field of each message.
+
+A record's sequence number *is* its 1-based position in the replay list, so the
+stored copy leaves ``seq`` out and :func:`replay_and_stream` reads it back from
+the position. That is what makes storing an event a single atomic step: one
+``RPUSH`` both appends the record and reports the number it was given, and a
+process that dies immediately afterwards leaves a complete record behind rather
+than a half-written one.
+
+A job also gets a marker key, ``job:{job_id}:started``, written by ``POST
+/check`` before the worker is spawned. It is what lets the stream endpoint tell
+"this job exists and may still have events coming" from "nobody ever started
+this id", which it must, because a stream opened on an id nobody started would
+otherwise wait for events that can never arrive.
 
 Nothing here reads settings or builds a Redis client: the caller passes the
 client in, so tests can hand these functions a fakeredis instance.
@@ -34,8 +47,17 @@ EVENTS_KEY = "job:{job_id}:events"
 CHANNEL = "job:{job_id}"
 """Pub/sub channel carrying the same records live."""
 
+STARTED_KEY = "job:{job_id}:started"
+"""Marker proving a job id was actually handed out and a worker spawned for it.
+
+Written by ``POST /check``; read by the stream endpoint, which 404s without it
+rather than holding a pub/sub connection open for a job that will never speak.
+"""
+
 JOB_TTL_SECONDS = 3600
-"""How long a job's event list survives after its last event."""
+"""How long a job's event list and its started marker survive after the job's
+last event. Both use the same window so a stream can never find the marker for a
+job whose events have already expired, or the reverse."""
 
 TERMINAL_EVENTS = frozenset({"done", "error"})
 """Event names that close the stream; nothing follows them."""
@@ -49,11 +71,20 @@ _SUBSCRIBE_TIMEOUT_SECONDS = 5.0
 """How long to wait for the server to confirm a SUBSCRIBE before giving up on
 the confirmation and reading the replay list anyway."""
 
-# Rewritten in place by publish_event once RPUSH reveals the sequence number.
-# A reader that catches this placeholder discards it: seq 0 never beats the
-# last sequence number it has seen, and the finished record reaches it on the
-# live channel a moment later.
-_PLACEHOLDER = json.dumps({"seq": 0, "event": "", "data": {}})
+
+async def mark_job_started(redis: Redis, job_id: str) -> None:
+    """Record that ``job_id`` was handed out and a worker was spawned for it.
+
+    Called by ``POST /check`` before the background task starts, so a client
+    that opens the stream the instant it gets the job id always finds the
+    marker.
+    """
+    await redis.set(STARTED_KEY.format(job_id=job_id), "1", ex=JOB_TTL_SECONDS)
+
+
+async def job_exists(redis: Redis, job_id: str) -> bool:
+    """Return True when ``job_id`` was started and has not yet expired."""
+    return bool(await redis.exists(STARTED_KEY.format(job_id=job_id)))
 
 
 async def publish_event(redis: Redis, job_id: str, event: str, data: dict[str, Any]) -> int:
@@ -61,22 +92,30 @@ async def publish_event(redis: Redis, job_id: str, event: str, data: dict[str, A
 
     Returns the sequence number assigned to the record — RPUSH's new list
     length, so sequence numbers start at 1 and never skip.
+
+    Assigning the number and storing the record is one atomic step: ``RPUSH``
+    appends the finished record *and* reports the position it landed in, so
+    there is no window in which the list holds a row that does not yet say what
+    it is. The number is therefore never written into the stored copy — it is
+    that row's position, and :func:`replay_and_stream` reads it back from there.
+    ``EXPIRE`` rides along in the same ``MULTI`` so a stored event is never left
+    without its TTL.
+
+    ``PUBLISH`` follows, deliberately outside the transaction: it is delivery,
+    not storage. A publish that fails costs a connected client nothing but a
+    wait, because the record is already in the replay list that every stream
+    reads first.
     """
     key = EVENTS_KEY.format(job_id=job_id)
     channel = CHANNEL.format(job_id=job_id)
 
-    # The record has to carry the sequence number that RPUSH is about to
-    # assign, so the row goes in as a placeholder and is rewritten in place
-    # once the length is known.
-    seq = int(await redis.rpush(key, _PLACEHOLDER))
-    record = json.dumps({"seq": seq, "event": event, "data": data})
-
     async with redis.pipeline(transaction=True) as pipe:
-        pipe.lset(key, seq - 1, record)
+        pipe.rpush(key, json.dumps({"event": event, "data": data}))
         pipe.expire(key, JOB_TTL_SECONDS)
-        pipe.publish(channel, record)
-        await pipe.execute()
+        length, _ = await pipe.execute()
 
+    seq = int(length)
+    await redis.publish(channel, json.dumps({"seq": seq, "event": event, "data": data}))
     return seq
 
 
@@ -112,8 +151,10 @@ async def replay_and_stream(redis: Redis, job_id: str) -> AsyncIterator[dict[str
         # and yielded below rather than dropped.
         pending = await _await_subscription(pubsub, job_id)
 
-        for raw in await redis.lrange(key, 0, -1):
-            record = _decode_record(raw, job_id)
+        # A record's sequence number is its 1-based position in this list, which
+        # is why publish_event does not store one: enumerate() is the authority.
+        for position, raw in enumerate(await redis.lrange(key, 0, -1), start=1):
+            record = _decode_record(raw, job_id, seq=position)
             if record is None or not accept(record):
                 continue
             yield record
@@ -167,8 +208,12 @@ async def _await_subscription(pubsub: PubSub, job_id: str) -> list[dict[str, Any
             buffered.append(record)
 
 
-def _decode_record(raw: object, job_id: str) -> dict[str, Any] | None:
+def _decode_record(raw: object, job_id: str, seq: int | None = None) -> dict[str, Any] | None:
     """Parse one stored or published record, or return None if it is unusable.
+
+    ``seq`` supplies the sequence number for a record read from the replay list,
+    where it is the row's position rather than part of the payload. Published
+    records carry their own and are read with ``seq=None``.
 
     A malformed record is dropped rather than allowed to kill a live stream;
     only the job id is logged, never the payload (it carries article text).
@@ -180,16 +225,17 @@ def _decode_record(raw: object, job_id: str) -> dict[str, Any] | None:
     except (UnicodeDecodeError, json.JSONDecodeError):
         logger.warning("job %s: dropping an event record that is not valid JSON", job_id)
         return None
-    if (
-        not isinstance(decoded, dict)
-        or not isinstance(decoded.get("seq"), int)
-        or not isinstance(decoded.get("event"), str)
-    ):
+    if not isinstance(decoded, dict) or not isinstance(decoded.get("event"), str):
         logger.warning("job %s: dropping an event record with an unexpected shape", job_id)
+        return None
+    if seq is None:
+        seq = decoded.get("seq")
+    if not isinstance(seq, int):
+        logger.warning("job %s: dropping an event record with no sequence number", job_id)
         return None
     data = decoded.get("data")
     return {
-        "seq": decoded["seq"],
+        "seq": seq,
         "event": decoded["event"],
         "data": data if isinstance(data, dict) else {},
     }

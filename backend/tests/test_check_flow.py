@@ -24,12 +24,15 @@ from typing import Any
 
 import httpx
 import pytest
+from fakeredis.aioredis import FakeRedis
 from fastapi import FastAPI
 
 import app.routes.check as check_route
 from app.config import Settings
+from app.events import mark_job_started
+from app.limits import CAP_KEY, singapore_today
 from app.pipeline.mock import RESOLVE_ORDER, load_fixture_claims, tally
-from app.schema_models import Claim, ClaimsFoundEvent, DoneEvent
+from app.schema_models import Claim, ClaimsFoundEvent, DoneEvent, ErrorEvent
 
 from .conftest import TEST_DAILY_CAP, TEST_MAX_CLAIMS, build_settings
 
@@ -38,8 +41,21 @@ EXPECTED_COUNTS = {"supported": 2, "contradicted": 2, "missing_context": 1, "unv
 
 EXPECTED_CLAIM_COUNT = 6
 
+EXPECTED_CLAIM_IDS = ["c1", "c2", "c3", "c4", "c5", "c6"]
+"""The fixture's claim ids in article order — what ``claims_found`` announces."""
+
 STREAM_TIMEOUT_SECONDS = 20.0
 """Generous, since it only ever bites on a hang."""
+
+
+def other_url(n: int) -> str:
+    """A URL the cache has never seen, so a POST for it is a genuine miss.
+
+    The daily cap is charged only on a cache miss, so any test that means to
+    spend quota has to ask for a different article each time — twenty POSTs for
+    one URL are one paid check and nineteen free replays.
+    """
+    return f"https://www.channelnewsasia.com/singapore/story-{n}"
 
 
 # --------------------------------------------------------------------- helpers
@@ -87,6 +103,10 @@ async def read_stream(client: httpx.AsyncClient, job_id: str) -> list[dict[str, 
     assert response.headers["content-type"].startswith("text/event-stream")
     assert response.headers["cache-control"] == "no-cache"
     assert response.headers["x-accel-buffering"] == "no"
+    # `Connection` is hop-by-hop: the ASGI server owns it, the application must
+    # not emit it. Asserted on the response as well as on SSE_HEADERS so a
+    # reintroduction anywhere in the chain fails here.
+    assert "connection" not in response.headers
     return parse_sse(response.text)
 
 
@@ -140,6 +160,11 @@ async def test_the_stream_delivers_claims_found_then_six_claims_then_done(
 
     found = ClaimsFoundEvent.model_validate(records[0]["data"])
     assert found.count == EXPECTED_CLAIM_COUNT
+    # Article order, not resolve order: the ids arrive before any claim does so
+    # the popup can lay out every row up front and fill each one when its own
+    # claim lands. `count` is derived from the list, so it can never disagree.
+    assert found.claim_ids == EXPECTED_CLAIM_IDS
+    assert found.count == len(found.claim_ids)
 
     claim_records = records[1:-1]
     streamed_ids = [record["data"]["id"] for record in claim_records]
@@ -219,7 +244,9 @@ async def test_the_raw_wire_format_is_id_event_data(
 
     body = response.text
     assert body.startswith(
-        'id: 1\nevent: claims_found\ndata: {"type":"claims_found","count":6}\n\n'
+        "id: 1\nevent: claims_found\n"
+        'data: {"type":"claims_found","count":6,'
+        '"claim_ids":["c1","c2","c3","c4","c5","c6"]}\n\n'
     )
     assert body.endswith("\n\n")
 
@@ -296,6 +323,28 @@ async def test_a_cache_hit_replays_all_six_claims(
     assert DoneEvent.model_validate(records[-1]["data"]).counts.model_dump() == EXPECTED_COUNTS
 
 
+async def test_a_cache_hit_announces_the_same_claim_ids_in_the_same_order(
+    client: httpx.AsyncClient, check_request_body: dict[str, str]
+) -> None:
+    """The replay's ``claims_found`` is identical to the live one.
+
+    That identity is the whole point of sending the ids up front: a client
+    allocates rows from ``claim_ids``, so if the cached path announced a
+    different order the same article would render two different ways depending
+    on whether anyone had checked it before.
+    """
+    first = (await client.post("/check", json=check_request_body)).json()
+    live = await read_stream(client, first["job_id"])
+
+    second = (await client.post("/check", json=check_request_body)).json()
+    replayed = await read_stream(client, second["job_id"])
+
+    live_found = ClaimsFoundEvent.model_validate(live[0]["data"])
+    replayed_found = ClaimsFoundEvent.model_validate(replayed[0]["data"])
+    assert replayed_found.claim_ids == live_found.claim_ids == EXPECTED_CLAIM_IDS
+    assert live_found.count == replayed_found.count == EXPECTED_CLAIM_COUNT
+
+
 async def test_a_different_url_is_not_served_from_the_cache(
     client: httpx.AsyncClient, check_request_body: dict[str, str]
 ) -> None:
@@ -317,11 +366,14 @@ async def test_a_check_past_the_daily_cap_is_a_429(
 
     The message is what the popup's error state shows, so it has to read as a
     sentence and must not slip into vocabulary the product does not use.
-    """
-    for _ in range(TEST_DAILY_CAP):
-        assert (await client.post("/check", json=check_request_body)).status_code == 200
 
-    response = await client.post("/check", json=check_request_body)
+    A different article each time, because only a cache miss costs an allowance.
+    """
+    for n in range(TEST_DAILY_CAP):
+        body = {**check_request_body, "url": other_url(n)}
+        assert (await client.post("/check", json=body)).status_code == 200
+
+    response = await client.post("/check", json={**check_request_body, "url": other_url(99)})
     assert response.status_code == 429
 
     payload = error_payload(response)
@@ -339,18 +391,180 @@ async def test_the_cap_is_per_install_id(
 
     School laptops share networks; they must not share an allowance.
     """
-    for _ in range(TEST_DAILY_CAP):
-        await client.post("/check", json=check_request_body)
-    assert (await client.post("/check", json=check_request_body)).status_code == 429
+    for n in range(TEST_DAILY_CAP):
+        await client.post("/check", json={**check_request_body, "url": other_url(n)})
+    exhausted = {**check_request_body, "url": other_url(99)}
+    assert (await client.post("/check", json=exhausted)).status_code == 429
 
-    other = {**check_request_body, "install_id": "99999999-8888-7777-6666-555555555555"}
+    other = {**exhausted, "install_id": "99999999-8888-7777-6666-555555555555"}
     assert (await client.post("/check", json=other)).status_code == 200
+
+
+async def test_a_cache_hit_does_not_spend_a_daily_check(
+    client: httpx.AsyncClient, fake_redis: FakeRedis, check_request_body: dict[str, str]
+) -> None:
+    """Two POSTs for one URL consume exactly one unit of quota.
+
+    The cap bounds LLM spend (``docs/decisions.md`` §10) and a replay from the
+    7-day URL cache spends nothing, so charging for it would ration the wrong
+    thing — a class of thirty reading the same article would exhaust their
+    allowances on work the backend never did.
+    """
+    first = (await client.post("/check", json=check_request_body)).json()
+    await read_stream(client, first["job_id"])
+
+    second = await client.post("/check", json=check_request_body)
+    assert second.status_code == 200
+    assert second.json()["cached"] is True
+
+    key = CAP_KEY.format(install_id=check_request_body["install_id"], day=singapore_today())
+    assert await fake_redis.get(key) == "1"
+
+
+async def test_cached_replays_keep_working_past_the_cap(
+    client: httpx.AsyncClient, check_request_body: dict[str, str]
+) -> None:
+    """A reader who has spent every check can still re-open a cached article.
+
+    The behavioural half of the same rule: quota buys pipeline runs, not reads.
+    """
+    # One paid check for the article under test, then the rest of the allowance
+    # spent on other articles.
+    assert (await client.post("/check", json=check_request_body)).status_code == 200
+    for n in range(TEST_DAILY_CAP - 1):
+        assert (
+            await client.post("/check", json={**check_request_body, "url": other_url(n)})
+        ).status_code == 200
+
+    spent = {**check_request_body, "url": other_url(99)}
+    assert (await client.post("/check", json=spent)).status_code == 429
+    assert (await client.post("/check", json=check_request_body)).status_code == 200
+
+
+async def test_an_uncached_url_is_charged_before_any_work_is_spawned(
+    client: httpx.AsyncClient, fake_redis: FakeRedis, check_request_body: dict[str, str]
+) -> None:
+    """Consulting the cache first must not open a bypass.
+
+    A miss pays up front, before a job id exists and before the pipeline is
+    spawned, so there is no ordering in which the expensive path runs free.
+    """
+    response = await client.post("/check", json=check_request_body)
+    assert response.status_code == 200
+
+    key = CAP_KEY.format(install_id=check_request_body["install_id"], day=singapore_today())
+    assert await fake_redis.get(key) == "1"
 
 
 async def test_a_malformed_request_is_rejected(client: httpx.AsyncClient) -> None:
     """A body that is not a ``CheckRequest`` never reaches the pipeline."""
     response = await client.post("/check", json={"url": "not a url", "title": "t"})
     assert response.status_code == 422
+
+
+# ------------------------------------------------------- the stream lifecycle
+
+
+def test_the_stream_never_sets_a_hop_by_hop_header() -> None:
+    """``Connection`` is the ASGI server's to manage, not the application's.
+
+    An application that sets a hop-by-hop header is speaking for a connection it
+    does not own; behind a proxy it is the header the proxy has to overrule.
+    """
+    assert "Connection" not in check_route.SSE_HEADERS
+    assert not any(name.lower() == "connection" for name in check_route.SSE_HEADERS)
+    assert check_route.SSE_HEADERS["Cache-Control"] == "no-cache"
+    assert check_route.SSE_HEADERS["X-Accel-Buffering"] == "no"
+
+
+async def test_an_unknown_job_id_is_a_404_not_a_subscription(
+    client: httpx.AsyncClient,
+) -> None:
+    """A job id nobody was ever given must not open a stream.
+
+    This route is not covered by the daily cap, so a stream that subscribed to
+    any id handed anyone an unauthenticated way to hold a Redis pub/sub
+    connection open — one per request, forever, since no worker would ever
+    publish the ``done`` that ends it.
+    """
+    async with asyncio.timeout(STREAM_TIMEOUT_SECONDS):
+        response = await client.get("/check/2b0f9a3e-0000-4000-8000-000000000000/stream")
+
+    assert response.status_code == 404
+    assert not response.headers["content-type"].startswith("text/event-stream")
+
+    payload = error_payload(response)
+    assert payload["code"] == "unknown_job"
+    assert isinstance(payload["message"], str) and payload["message"].strip()
+    assert "flagged" not in payload["message"].lower()
+
+
+async def test_a_job_whose_worker_never_publishes_times_out(
+    client: httpx.AsyncClient,
+    fake_redis: FakeRedis,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A started job that goes silent ends in ``error``/``timeout``, not a hang.
+
+    The real case: ``POST /check`` returns a job id and spawns the pipeline, then
+    the uvicorn process restarts. The task is process-local, so it is simply
+    gone and nothing will ever publish ``done`` for that id. Before the deadline
+    existed the connected client sat there collecting a keep-alive every twenty
+    seconds for as long as it cared to wait.
+    """
+    monkeypatch.setattr(check_route, "KEEPALIVE_SECONDS", 0.05)
+    monkeypatch.setattr(check_route, "STREAM_DEADLINE_FACTOR", 0.0)
+    monkeypatch.setattr(check_route, "MIN_STREAM_DEADLINE_SECONDS", 0.3)
+
+    # A job that was started and then abandoned: the marker is there, the worker
+    # is not, and the event list stays empty forever.
+    job_id = "9f1c7b52-1111-4000-8000-111111111111"
+    await mark_job_started(fake_redis, job_id)
+
+    async with asyncio.timeout(STREAM_TIMEOUT_SECONDS):
+        response = await client.get(f"/check/{job_id}/stream")
+
+    assert response.status_code == 200
+    records = parse_sse(response.text)
+    assert [record["event"] for record in records] == ["error"]
+
+    error = ErrorEvent.model_validate(records[0]["data"])
+    assert error.code == "timeout"
+    assert error.message.strip()
+    assert "flagged" not in error.message.lower()
+
+    # The relay invented this event, so it borrows no job sequence number: no
+    # `id:` line, and the client's last event id is left where it was.
+    assert records[0]["id"] is None
+    assert "\nid:" not in response.text and not response.text.startswith("id:")
+
+
+async def test_the_deadline_is_derived_from_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The budget scales with the configured job shape, and never hits zero."""
+    monkeypatch.setattr(check_route, "STREAM_DEADLINE_FACTOR", 4.0)
+    monkeypatch.setattr(check_route, "MIN_STREAM_DEADLINE_SECONDS", 10.0)
+
+    slow = build_settings(max_claims=8, mock_step_delay=1.0)
+    assert check_route.stream_deadline_seconds(slow) == 32.0
+
+    # A configuration with no per-claim pacing still gets a usable budget.
+    instant = build_settings(max_claims=8, mock_step_delay=0.0)
+    assert check_route.stream_deadline_seconds(instant) == 10.0
+
+
+async def test_a_live_job_is_not_cut_off_by_the_deadline(
+    client: httpx.AsyncClient, check_request_body: dict[str, str]
+) -> None:
+    """The deadline is a backstop, not a service-level target.
+
+    Cutting a slow-but-alive check off would be a far worse bug than holding one
+    connection open a little longer, so the real settings must leave a job that
+    is still publishing plenty of room.
+    """
+    job = (await client.post("/check", json=check_request_body)).json()
+    records = await read_stream(client, job["job_id"])
+
+    assert [record["event"] for record in records][-1] == "done"
 
 
 # --------------------------------------------------------------- the keepalive

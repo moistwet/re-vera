@@ -13,13 +13,30 @@ from __future__ import annotations
 import hashlib
 import json
 from typing import Any
+from urllib.parse import urlparse
 
 from fakeredis.aioredis import FakeRedis
 
 from app.cache import CACHE_TTL_SECONDS, cache_key, get_check, set_check
 from app.schema_models import CheckRequest
 
-URL = "https://news.yahoo.com/hawker-stall-rents-rise-vendors"
+RESERVED_HOST = "example.com"
+"""RFC 2606 reserves example.com so it can never be a real site.
+
+Every URL invented in this module lives there, for the same reason the fixture's
+do (``tests/test_schema.py``): the data here is made up, and hanging a made-up
+article or a made-up "CNA report" off a real newsroom's domain presents
+invention as that newsroom's work. Outlet *names* stay — they are what makes the
+payload read realistically — but the URLs must not be real ones.
+"""
+
+URL = "https://example.com/re-vera-fixture/fictional-news/hawker-stall-rents-rise-vendors"
+"""The article URL these tests cache under. Has a path on purpose: ``AnyUrl``
+appends a trailing slash to an origin-only URL, and the round-trip test below
+depends on this one surviving parsing byte-identical."""
+
+OTHER_URL = "https://example.com/re-vera-fixture/fictional-cna/some-other-article"
+"""A second, different article — used to prove two URLs never share a key."""
 
 RESULT: dict[str, Any] = {
     "claims": [
@@ -33,7 +50,7 @@ RESULT: dict[str, Any] = {
             "evidence": "An official release puts the median adjustment at 4%, not 40%.",
             "sources": [
                 {
-                    "url": "https://www.channelnewsasia.com/singapore/hawker-rents",
+                    "url": "https://example.com/re-vera-fixture/fictional-cna/hawker-rents",
                     "outlet": "CNA",
                     "date": "2026-03-12",
                     "wire": False,
@@ -47,6 +64,26 @@ RESULT: dict[str, Any] = {
     "checked_at": "2026-08-31T04:15:09Z",
 }
 """A realistic cached payload, non-ASCII included (the trail note has a middot)."""
+
+
+def test_every_url_in_this_modules_test_data_is_invented_on_a_reserved_domain() -> None:
+    """No made-up URL here may hang off a real newsroom's domain.
+
+    ``tests/test_schema.py`` enforces exactly this for the fixture article, but
+    that guard reads the fixture file and so never saw the payloads defined
+    inline here — which is how an invented ``news.yahoo.com`` article and an
+    invented ``channelnewsasia.com`` "report" survived in this module. Both are
+    fabrications, and CLAUDE.md is explicit that invented material must never be
+    presented as real reporting. This test moves the rule to where the data
+    lives, so the next inline payload cannot reintroduce it.
+    """
+    urls = [URL, OTHER_URL]
+    urls += [source["url"] for claim in RESULT["claims"] for source in claim["sources"]]
+
+    for url in urls:
+        host = (urlparse(url).hostname or "").lower()
+        assert host == RESERVED_HOST, url
+        assert "re-vera-fixture" in url, url
 
 
 def test_cache_key_is_check_plus_the_sha256_of_the_url() -> None:
@@ -127,10 +164,10 @@ async def test_two_urls_do_not_collide(fake_redis: FakeRedis) -> None:
     other = {"claims": [], "counts": {}, "checked_at": "2026-08-30T00:00:00Z"}
 
     await set_check(fake_redis, URL, RESULT)
-    await set_check(fake_redis, "https://www.channelnewsasia.com/singapore/other", other)
+    await set_check(fake_redis, OTHER_URL, other)
 
     assert await get_check(fake_redis, URL) == RESULT
-    assert await get_check(fake_redis, "https://www.channelnewsasia.com/singapore/other") == other
+    assert await get_check(fake_redis, OTHER_URL) == other
 
 
 async def test_overwriting_replaces_the_entry(fake_redis: FakeRedis) -> None:

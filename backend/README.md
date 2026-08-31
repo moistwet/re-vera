@@ -78,8 +78,28 @@ the script from the repo root, and commit both outputs with the schema change.
 | `POST` | `/check`                   | `CheckRequest` → `CheckJob`; starts a job         |
 | `GET`  | `/check/{job_id}/stream`   | Server-Sent Events for that job                   |
 
-`POST /check` returns `429` with `{"code": "daily_limit", "message": …}` once an
-install ID passes `DAILY_CAP` checks for the day (Asia/Singapore).
+### Error bodies
+
+Both error responses are raised as FastAPI `HTTPException`s, so the
+`{"code", "message"}` pair arrives **nested under `detail`** — that is the shape
+on the wire today, and what the extension's service worker parses:
+
+```json
+{ "detail": { "code": "daily_limit", "message": "You have used all 20 of today's checks. …" } }
+```
+
+| Status | `code`        | When                                                                 |
+| ------ | ------------- | -------------------------------------------------------------------- |
+| `429`  | `daily_limit` | An install ID passed `DAILY_CAP` checks today (Asia/Singapore)        |
+| `404`  | `unknown_job` | A stream was opened on a job id we never handed out, or one over an hour old |
+
+The daily cap is charged on a **cache miss only**. It exists to bound LLM spend
+(`docs/decisions.md` §10) and a replay from the 7-day URL cache costs nothing, so
+re-checking an article anyone has already checked is free — a class reading the
+same story does not burn thirty allowances on work the backend never does. A
+miss is charged before any job is spawned, so the expensive path is never free.
+
+### The stream
 
 The stream uses the SSE `id:` field as a monotonic per-job sequence number so a
 reconnecting client can drop duplicates, `event:` for the type
@@ -88,7 +108,7 @@ reconnecting client can drop duplicates, `event:` for the type
 ```
 id: 1
 event: claims_found
-data: {"type":"claims_found","count":6}
+data: {"type":"claims_found","count":6,"claim_ids":["c1","c2","c3","c4","c5","c6"]}
 
 id: 2
 event: claim
@@ -99,9 +119,32 @@ event: done
 data: {"type":"done","counts":{…},"checked_at":"2026-08-31T…"}
 ```
 
+`claims_found.claim_ids` lists every claim the job will send, in **article
+order** (ascending by `start`), and `count` always equals its length. The claim
+events themselves arrive out of that order on purpose, so a client allocates one
+row per id up front and writes each claim into the row matching its own `id`.
+The cached replay announces the same ids in the same order as a live run.
+
 A bare `: keep-alive` comment goes out every 20 s of silence so the MV3 service
-worker's `fetch` is never idle long enough to be killed. The stream closes after
-`done` or `error`.
+worker's `fetch` is never idle long enough to be killed. Response headers are
+`Cache-Control: no-cache` and `X-Accel-Buffering: no`; `Connection` is hop-by-hop
+and belongs to the ASGI server, so the application never sets it.
+
+The stream closes after `done` or `error`, and two things guarantee it closes:
+
+* **Unknown job ids are refused.** `POST /check` writes a `job:{job_id}:started`
+  marker before spawning the worker, and the stream 404s when it is absent. The
+  stream is not covered by the daily cap, so subscribing to any id anyone asked
+  for would be an unauthenticated way to pin one Redis pub/sub connection per
+  request.
+* **Every stream has a deadline**, derived from `MAX_CLAIMS × MOCK_STEP_DELAY`
+  with a generous multiplier and a two-minute floor. A worker can vanish — the
+  process restarts and the task, being process-local, is simply gone — leaving a
+  job that will never publish `done`. Past the deadline the stream emits
+  `event: error` with `{"type":"error","code":"timeout","message":…}` and closes.
+  That one message carries **no `id:` line**: it is the relay's own event, never
+  written to the job's replay list, so it borrows no sequence number and leaves
+  the client's last event id where it was.
 
 ## Configuration
 
@@ -130,7 +173,7 @@ backend/
     config.py          Settings (pydantic-settings) + get_settings()
     schema_models.py   GENERATED from shared/schema.json — do not hand-edit
     main.py            app factory, CORS, Redis lifespan, router mount
-    events.py          per-job Redis event list (replay) + pub/sub (live)
+    events.py          per-job Redis event list (replay) + pub/sub (live) + started marker
     cache.py           7-day URL cache, key check:{sha256(url)}
     limits.py          per-install daily cap
     routes/check.py    POST /check, GET /check/{job_id}/stream

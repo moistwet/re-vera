@@ -49,13 +49,25 @@ async def check_daily_cap(redis: Redis, install_id: str, cap: int, day: str | No
     Raises :class:`DailyCapExceeded` once the count passes ``cap``. ``day``
     defaults to :func:`singapore_today`; tests pass it explicitly to avoid
     depending on the clock.
+
+    The counter is created and incremented in one transaction. ``SET NX`` seeds
+    the key at zero *with* its expiry, so the TTL is set at creation and never
+    afterwards — the window stays anchored to the day rather than sliding with
+    the last check — and ``INCR`` then returns this call's 1-based position.
+    Doing it as ``INCR`` followed by a conditional ``EXPIRE`` was two round
+    trips: a failure, restart or disconnect between them left a counter with no
+    TTL at all, which would have locked that install ID out for good.
     """
     key = CAP_KEY.format(install_id=install_id, day=day or singapore_today())
-    count = int(await redis.incr(key))
-    if count == 1:
-        # First check of the day: give the fresh counter its expiry. Setting it
-        # only here keeps the window anchored to the day, not to the last check.
-        await redis.expire(key, CAP_TTL_SECONDS)
+
+    async with redis.pipeline(transaction=True) as pipe:
+        # NX: only the first check of the day creates the key, so a later SET
+        # can never reset the count or refresh the expiry.
+        pipe.set(key, 0, nx=True, ex=CAP_TTL_SECONDS)
+        pipe.incr(key)
+        _, incremented = await pipe.execute()
+
+    count = int(incremented)
     if count > cap:
         raise DailyCapExceeded(count, cap)
     return count

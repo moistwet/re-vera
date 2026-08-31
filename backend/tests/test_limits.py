@@ -103,6 +103,57 @@ async def test_the_counter_key_gets_a_ttl(fake_redis: FakeRedis) -> None:
     assert await fake_redis.ttl(key) <= first_ttl
 
 
+async def test_the_key_always_has_a_ttl_from_the_very_first_increment(
+    fake_redis: FakeRedis,
+) -> None:
+    """A cap key without a TTL never expires, and locks that install ID out for good.
+
+    The counter used to be ``INCR`` followed by a conditional ``EXPIRE`` — two
+    round trips — so a crash, restart or dropped connection between them left a
+    key at 1 with no expiry, and that reader was capped forever. Seeding and
+    incrementing now happen in one transaction, so the TTL exists from the first
+    call onwards and never has a window in which it does not.
+    """
+    key = cap_key(INSTALL_ID, DAY)
+
+    for expected in range(1, 6):
+        assert await check_daily_cap(fake_redis, INSTALL_ID, CAP, day=DAY) == expected
+        ttl = await fake_redis.ttl(key)
+        assert ttl > 0, f"no TTL after increment {expected} (ttl={ttl})"
+        assert ttl <= CAP_TTL_SECONDS
+
+
+async def test_the_ttl_survives_a_broken_standalone_expire(
+    fake_redis: FakeRedis, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The expiry is not a separate ``EXPIRE`` call that can fail on its own.
+
+    Sabotaging ``redis.expire`` proves the point: if the cap still depended on a
+    second round trip, this would either raise or leave the key TTL-less.
+    """
+
+    async def unreachable(*args: object, **kwargs: object) -> int:
+        raise AssertionError("check_daily_cap must not issue a standalone EXPIRE")
+
+    monkeypatch.setattr(fake_redis, "expire", unreachable)
+
+    assert await check_daily_cap(fake_redis, INSTALL_ID, CAP, day=DAY) == 1
+    assert await fake_redis.ttl(cap_key(INSTALL_ID, DAY)) > 0
+
+
+async def test_a_second_check_never_resets_the_counter(fake_redis: FakeRedis) -> None:
+    """The seeding write is ``SET NX``: it must not zero a counter already running.
+
+    A plain ``SET`` here would hand every reader an unlimited allowance.
+    """
+    for _ in range(CAP):
+        await check_daily_cap(fake_redis, INSTALL_ID, CAP, day=DAY)
+
+    assert await fake_redis.get(cap_key(INSTALL_ID, DAY)) == str(CAP)
+    with pytest.raises(DailyCapExceeded):
+        await check_daily_cap(fake_redis, INSTALL_ID, CAP, day=DAY)
+
+
 async def test_the_counter_lives_under_the_documented_key(fake_redis: FakeRedis) -> None:
     """``cap:{install_id}:{day}`` — the key shape the brief documents."""
     await check_daily_cap(fake_redis, INSTALL_ID, CAP, day=DAY)

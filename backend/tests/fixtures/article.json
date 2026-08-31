@@ -1,5 +1,6 @@
 {
-  "url": "https://news.yahoo.com/hawker-stall-rents-rise-vendors",
+  "_fictional": "FICTIONAL TEST DATA. This article, its headline, its text, all six claims, every verdict, every evidence sentence and every source below are invented for Re-Vera's tests and demos. No real reporting is quoted or summarised here. The outlet names are kept only so the demo reads realistically; the outlets never published any of this, and every url deliberately points at example.com so nothing here can be mistaken for, or resolve to, a real story. Never present any of it as real reporting.",
+  "url": "https://example.com/re-vera-fixture/fictional-news/hawker-stall-rents-rise-vendors",
   "title": "Hawker stall rents to rise 40% next year, vendors say",
   "text": "SINGAPORE — Hawker stall rents across the island are set to rise by 40% from 1 January, according to vendors who spoke to reporters this week.\n\nMore than 200 stalls have already closed this year, the vendors said, blaming rising costs.\n\nThe vendors, who run stalls at centres in Toa Payoh, Bedok and Jurong West, said they were told of the increase at a briefing last month. None would give their names, saying they feared losing their leases.\n\nThe last islandwide rent adjustment took effect in 2024. Stallholders said the years since had been lean ones, with the cost of cooking oil, gas and vegetables climbing through each of them.\n\nA recent survey found that eight in ten hawkers are considering leaving the trade. The survey circulated among stallholders online, and its findings were written up by local outlets last month.\n\nAn official spokesperson was quoted as saying rents “will not be capped under any circumstances.”\n\nThe review takes effect on 1 January. Stallholders have asked for a longer transition period, and for the full schedule of new rents to be published before then.\n\nHawker centres remain among the cheapest places to eat in the city, and stallholders say any increase would reach customers within weeks.",
   "claims": [
@@ -13,21 +14,21 @@
       "evidence": "An official release and CNA put the median adjustment at 4%, not 40%.",
       "sources": [
         {
-          "url": "https://www.gov.sg/newsroom/hawker-centre-rental-review-2026",
+          "url": "https://example.com/re-vera-fixture/fictional-gov-sg/hawker-centre-rental-review-2026",
           "outlet": "gov.sg release",
           "date": "2026-03-12",
           "wire": false,
           "stance": "refutes"
         },
         {
-          "url": "https://www.channelnewsasia.com/singapore/hawker-stall-rents-median-adjustment-four-per-cent",
+          "url": "https://example.com/re-vera-fixture/fictional-cna/hawker-stall-rents-median-adjustment",
           "outlet": "CNA",
           "date": "2026-03-12",
           "wire": false,
           "stance": "refutes"
         },
         {
-          "url": "https://www.reuters.com/world/asia-pacific/singapore-hawker-rents-to-rise-4-percent-2026-03-13/",
+          "url": "https://example.com/re-vera-fixture/fictional-reuters/singapore-hawker-rents-4-per-cent",
           "outlet": "Reuters",
           "date": "2026-03-13",
           "wire": true,
@@ -79,14 +80,14 @@
       "evidence": "Straits Times and official data confirm the 2024 adjustment.",
       "sources": [
         {
-          "url": "https://www.straitstimes.com/singapore/hawker-centre-rents-adjusted-in-2024-what-changed",
+          "url": "https://example.com/re-vera-fixture/fictional-straits-times/hawker-rents-adjusted-2024",
           "outlet": "Straits Times",
           "date": "2024-02-14",
           "wire": false,
           "stance": "supports"
         },
         {
-          "url": "https://data.gov.sg/datasets/hawker-centre-stall-rentals",
+          "url": "https://example.com/re-vera-fixture/fictional-data-gov-sg/hawker-centre-stall-rentals",
           "outlet": "data.gov.sg",
           "date": "2024-04-01",
           "wire": false,
@@ -118,14 +119,14 @@
       "evidence": "The survey exists, but had 42 self-selected respondents.",
       "sources": [
         {
-          "url": "https://mothership.sg/2026/06/hawker-survey-eight-in-ten-considering-leaving/",
+          "url": "https://example.com/re-vera-fixture/fictional-mothership/hawker-survey-eight-in-ten",
           "outlet": "Mothership",
           "date": "2026-06-18",
           "wire": false,
           "stance": "supports"
         },
         {
-          "url": "https://www.hawkersvoice.sg/reports/2026-hawker-sentiment-survey.pdf",
+          "url": "https://example.com/re-vera-fixture/fictional-survey/2026-hawker-sentiment-survey.pdf",
           "outlet": "Survey PDF",
           "date": "2026-06-05",
           "wire": false,
@@ -157,7 +158,7 @@
       "evidence": "The quoted line doesn’t appear in the transcript; the spokesperson said caps would be “reviewed”.",
       "sources": [
         {
-          "url": "https://www.gov.sg/newsroom/transcripts/hawker-rental-review-doorstop-10-march-2026",
+          "url": "https://example.com/re-vera-fixture/fictional-gov-sg/hawker-rental-doorstop-transcript",
           "outlet": "Official transcript",
           "date": "2026-03-10",
           "wire": false,
@@ -185,7 +186,7 @@
       "evidence": "Matches the official release.",
       "sources": [
         {
-          "url": "https://www.gov.sg/newsroom/hawker-centre-rental-review-2026",
+          "url": "https://example.com/re-vera-fixture/fictional-gov-sg/hawker-centre-rental-review-2026",
           "outlet": "gov.sg release",
           "date": "2026-03-12",
           "wire": false,
