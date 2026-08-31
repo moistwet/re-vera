@@ -20,6 +20,20 @@ all six rows up front and writes each one when its own claim lands, whatever
 order the claim events arrive in. The live path and the cached replay publish
 the same ids in the same order; that identity is the point.
 
+**The submitted article text is ignored, and so are the offsets that follow from
+it.** ``run_mock_pipeline`` never reads ``request.text``: it streams the fixture's
+claims verbatim, which means every ``start``/``end`` it publishes is a character
+offset into ``backend/tests/fixtures/article.json``'s *own* ``text``, not into
+the text the client sent. ``shared/schema.json`` documents those fields as
+offsets into ``CheckRequest.text`` and milestone 3's anchoring builds on that
+contract (``docs/decisions.md`` §12), so the two disagree for as long as the
+pipeline is a mock. This is deliberate: faking or recomputing offsets against the
+submitted text would make milestone 1 look like it honours a contract it cannot
+honour — the verdicts are fixture data and have nothing to do with the submitted
+article either. A client must therefore **not** resolve these offsets against the
+article it sent until the real pipeline lands in milestone 2; until then treat a
+claim's ``quote`` as the only thing tying it to any real text.
+
 Every payload this module publishes is built by constructing the generated
 model (``ClaimsFoundEvent``/``DoneEvent``/``ErrorEvent``) and dumping it, so the
 wire format cannot drift from ``shared/schema.json`` without a test failing

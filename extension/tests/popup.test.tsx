@@ -31,6 +31,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import App from '../src/popup/App'
 import { INITIAL_JOB_STATE, type JobState } from '../src/shared/messages'
+import { canonicalUrl, sameArticle } from '../src/shared/url'
 import type { Claim, Confidence, Counts, Verdict } from '../src/types/schema'
 
 /* -------------------------------------------------------------------------- */
@@ -375,6 +376,49 @@ describe('claim rows', () => {
     expect(rowSequence()).toEqual(ARTICLE_ORDER.map(label))
   })
 
+  it('keeps the very same row nodes when a cache hit later learns the claim ids', async () => {
+    // The cache-hit sequence, which is the one that is supposed to feel
+    // instant: POST /check answers `{cached: true, claim_count: 6}`, so the
+    // worker knows the count before `claims_found` has named a single id. The
+    // list therefore renders once from the count alone and again from the ids.
+    //
+    // Keying rows by claim id made those two renders six *different* keys
+    // (`pending-0…5` then `c1…c6`), so React unmounted and remounted every row
+    // — a visible flash on the fastest path in the product. Keyed by position,
+    // the identical <li> nodes survive and simply gain their content.
+    stubChrome()
+    await mount()
+
+    await push(
+      jobState({
+        url: ARTICLE_URL,
+        title: ARTICLE_TITLE,
+        status: 'checking',
+        claimCount: CLAIMS.length,
+        // claims_found has not landed yet — this is the fallback branch.
+        claimIds: null,
+      }),
+    )
+    const before = rows()
+    expect(before).toHaveLength(CLAIMS.length)
+    expect(rowSequence()).toEqual(Array<string>(CLAIMS.length).fill('pending'))
+
+    // claims_found arrives: same six rows, now driven by the id branch.
+    await push(jobState({ ...BASE, status: 'checking' }))
+    const afterIds = rows()
+    expect(afterIds).toHaveLength(CLAIMS.length)
+    // Identity, not equality: a remount would produce fresh elements here.
+    for (const [i, node] of afterIds.entries()) expect(node).toBe(before[i])
+
+    // …and they keep surviving as the claims themselves stream in. (Only within
+    // the checking screen: `done` is a different component, so its list is a
+    // new subtree by construction and node identity there means nothing.)
+    await push(jobState({ ...BASE, status: 'checking', claims: ['c3', 'c1'].map(byId) }))
+    for (const [i, node] of rows().entries()) expect(node).toBe(before[i])
+    expect(rowSequence()[0]).toBe(label('c1'))
+    expect(rowSequence()[2]).toBe(label('c3'))
+  })
+
   it('falls back too when the announced ids are shorter than the count', async () => {
     stubChrome()
     await mount()
@@ -480,6 +524,49 @@ describe('done state', () => {
     expect(findButton('Check this article')).toBeNull()
   })
 
+  it('treats a trailing slash as the same article — tab slashed, result not', async () => {
+    // The shared rule (src/shared/url.ts). It matters far more on the service
+    // worker's side of the same import, where the answer decides whether a
+    // finished result is thrown away: the worker used to compare pathnames
+    // verbatim, so `/story/` in the tab against `/story` in the result reset a
+    // completed check to idle while the popup called them the same page.
+    stubChrome({ tab: { title: ARTICLE_TITLE, url: `${ARTICLE_URL}/` } })
+    await mount()
+    await push(done())
+
+    expect(findButton('Check again')).not.toBeNull()
+    expect(findButton('Check this article')).toBeNull()
+  })
+
+  it('treats a trailing slash as the same article — result slashed, tab not', async () => {
+    stubChrome({ tab: { title: ARTICLE_TITLE, url: ARTICLE_URL } })
+    await mount()
+    await push(
+      jobState({
+        ...BASE,
+        url: `${ARTICLE_URL}/`,
+        status: 'done',
+        claims: [...CLAIMS],
+        counts: COUNTS,
+      }),
+    )
+
+    expect(findButton('Check again')).not.toBeNull()
+    expect(findButton('Check this article')).toBeNull()
+  })
+
+  it('still treats a different query string as a different article', async () => {
+    // News CMSes put the article's identity in the query (`?id=`, `?page=`), so
+    // the canonical form keeps it. Dropping it would let one story's verdicts
+    // be shown over another's.
+    stubChrome({ tab: { title: ARTICLE_TITLE, url: `${ARTICLE_URL}?page=2` } })
+    await mount()
+    await push(done())
+
+    expect(findButton('Check this article')).not.toBeNull()
+    expect(findButton('Check again')).toBeNull()
+  })
+
   it('names the article the result belongs to', async () => {
     stubChrome({ tab: { title: 'A different article', url: 'https://news.example.com/other' } })
     await mount()
@@ -572,5 +659,51 @@ describe('stale replies', () => {
     // the popup has — the guard must not swallow it.
     expect(view().querySelector('.rv-summary')).not.toBeNull()
     expect(rowSequence()).toEqual(ARTICLE_ORDER.map(label))
+  })
+})
+
+/* -------------------------------------------------------------------------- */
+/* 5. The shared same-article rule                                             */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * `src/shared/url.ts` is imported by both the popup (which labels a button with
+ * the answer) and the service worker (which DISCARDS a finished result with it).
+ * They used to hold a copy each and the copies disagreed about trailing
+ * slashes, so the worker binned results the popup would have kept. These pin the
+ * rule itself, once, for both callers.
+ */
+describe('shared same-article rule', () => {
+  it('ignores a trailing slash in either direction', () => {
+    expect(sameArticle('https://site.com/story/', 'https://site.com/story')).toBe(true)
+    expect(sameArticle('https://site.com/story', 'https://site.com/story/')).toBe(true)
+    expect(sameArticle('https://site.com/story///', 'https://site.com/story')).toBe(true)
+    // Bare origins, with and without the root slash.
+    expect(sameArticle('https://site.com/', 'https://site.com')).toBe(true)
+  })
+
+  it('ignores the fragment', () => {
+    expect(sameArticle('https://site.com/story#comments', 'https://site.com/story/')).toBe(true)
+  })
+
+  it('keeps the query string, because news sites put article ids in it', () => {
+    expect(sameArticle('https://site.com/read?id=1', 'https://site.com/read?id=2')).toBe(false)
+    expect(sameArticle('https://site.com/read?id=1', 'https://site.com/read')).toBe(false)
+    // The trailing slash comes off the path, never out of the query.
+    expect(sameArticle('https://site.com/read/?id=1', 'https://site.com/read?id=1')).toBe(true)
+    expect(sameArticle('https://site.com/read?id=1/', 'https://site.com/read?id=1')).toBe(false)
+  })
+
+  it('separates different origins and different interior paths', () => {
+    expect(sameArticle('https://site.com/story', 'https://other.com/story')).toBe(false)
+    expect(sameArticle('https://site.com/story', 'http://site.com/story')).toBe(false)
+    expect(sameArticle('https://site.com/a/b', 'https://site.com/a//b')).toBe(false)
+  })
+
+  it('falls back to string equality for anything unparseable', () => {
+    expect(canonicalUrl('not a url')).toBeNull()
+    expect(sameArticle('not a url', 'not a url')).toBe(true)
+    expect(sameArticle('not a url', 'also not a url')).toBe(false)
+    expect(sameArticle('not a url', 'https://site.com/story')).toBe(false)
   })
 })

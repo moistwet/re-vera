@@ -6,6 +6,17 @@ skeleton: `POST /check` and `GET /check/{job_id}/stream` are real, backed by a
 seven seconds. There are no LLM calls and no API keys yet. Redis caching and the
 per-install daily cap are real from day one.
 
+**Milestone 1 ignores the submitted article text.** The mock pipeline never
+reads `CheckRequest.text`; it replays `tests/fixtures/article.json` verbatim, so
+every `start`/`end` it streams indexes *that fixture's own* text, not the text
+the client posted — even though `shared/schema.json` defines the pair as
+character offsets into `CheckRequest.text` and milestone 3's anchoring is built
+on that contract (`docs/decisions.md` §12). The offsets are deliberately left
+un-faked rather than recomputed against the submitted article. **A client must
+not resolve these offsets against the article it sent until the real pipeline
+lands in milestone 2**; the claim's `quote` is the only field that ties it to any
+real text before then.
+
 Requires Python 3.12 (see `.python-version`) and a Redis on `localhost:6379`.
 
 ## Quickstart
@@ -44,7 +55,13 @@ them — use `uv sync --extra dev` (equivalent to step 1's `uv pip install`).
 `uv.lock` is written by `uv` on the first `uv run`; delete it to re-resolve.
 
 Tests use [fakeredis] and never touch the network or a live Redis — step 3 is
-only needed to run the server by hand.
+only needed to run the server by hand. The pin is `fakeredis[lua]`, and the extra
+is **not** optional: `app/events.py` publishes through a Lua script, and
+fakeredis can only answer `EVAL`/`EVALSHA` when the `lupa` that extra pulls is
+installed. A plain `fakeredis` pin turns the whole event suite red with
+`ResponseError: unknown command 'evalsha'`. Two tests in `tests/test_events.py`
+guard it so the next person to tidy the dependency list gets a clear failure
+instead of that one.
 
 [fakeredis]: https://pypi.org/project/fakeredis/
 
@@ -99,6 +116,16 @@ re-checking an article anyone has already checked is free — a class reading th
 same story does not burn thirty allowances on work the backend never does. A
 miss is charged before any job is spawned, so the expensive path is never free.
 
+A cache hit is only taken once the stored claims have been re-checked against
+the two product invariants (`app/invariants.py`: confidence null iff
+`unverifiable`, sources empty iff `unverifiable`). An entry that breaks one —
+written by an older build, or corrupted in place — is **deleted** and the request
+falls through to the miss branch, so the article is re-checked and the cap is
+charged as usual. Without that, one bad entry would replay as an `error` for
+every reader of that URL for the full seven-day TTL with nothing able to clear
+it. Only the offending claim's id and the rule it broke are logged: never the
+article text, and never a URL alongside an install ID.
+
 ### The stream
 
 The stream uses the SSE `id:` field as a monotonic per-job sequence number so a
@@ -129,6 +156,28 @@ A bare `: keep-alive` comment goes out every 20 s of silence so the MV3 service
 worker's `fetch` is never idle long enough to be killed. Response headers are
 `Cache-Control: no-cache` and `X-Accel-Buffering: no`; `Connection` is hop-by-hop
 and belongs to the ASGI server, so the application never sets it.
+
+Sequence numbers are handed out and delivered in **one** indivisible server-side
+step (a Lua script in `app/events.py`), not as an append followed by a separate
+publish. Two workers publishing for the same job therefore cannot let seq 4 reach
+the channel ahead of seq 3 — which would not make seq 3 late but lose it, since
+the relay drops anything numbered at or below what it has already sent.
+
+#### The job window slides
+
+A job owns two keys — `job:{id}:events` and the `job:{id}:started` marker — and
+**every** published event re-issues the one-hour `EXPIRE` on *both* of them, in
+that same atomic step. The hour is therefore measured from a job's most recent
+event, not from `POST /check`, so a check that runs longer than an hour is never
+404'd by the stream endpoint while it is still publishing. Refreshing them
+together is the point: a marker on a shorter clock than its events would make the
+stream refuse a live job, and events outliving their marker would be unreachable
+anyway. A job that never publishes expires an hour after `POST /check` wrote the
+marker.
+
+Refreshing is not creating. `EXPIRE` is a no-op on a key that does not exist, so
+publishing for an id `POST /check` never marked leaves it just as non-existent —
+the 404 path below is unaffected.
 
 The stream closes after `done` or `error`, and two things guarantee it closes:
 
@@ -174,7 +223,8 @@ backend/
     schema_models.py   GENERATED from shared/schema.json — do not hand-edit
     main.py            app factory, CORS, Redis lifespan, router mount
     events.py          per-job Redis event list (replay) + pub/sub (live) + started marker
-    cache.py           7-day URL cache, key check:{sha256(url)}
+    cache.py           7-day URL cache, key check:{sha256(url)} — get/set/delete
+    invariants.py      the two cross-field product rules the schema cannot express
     limits.py          per-install daily cap
     routes/check.py    POST /check, GET /check/{job_id}/stream
     pipeline/mock.py   milestone-1 fake pipeline (six fixture claims)

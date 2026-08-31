@@ -56,3 +56,21 @@ async def get_check(redis: Redis, url: str) -> dict[str, Any] | None:
 async def set_check(redis: Redis, url: str, result: dict[str, Any]) -> None:
     """Cache ``result`` for ``url`` for :data:`CACHE_TTL_SECONDS`."""
     await redis.set(cache_key(url), json.dumps(result), ex=CACHE_TTL_SECONDS)
+
+
+async def delete_check(redis: Redis, url: str) -> bool:
+    """Drop the cached result for ``url``. Returns True if there was one.
+
+    The counterpart to :func:`set_check`, and the third member of the trio a
+    caller needs: ``app.routes.check.usable_cache_entry`` deletes an entry whose
+    claims break a product invariant so the article is re-checked rather than
+    replaying a dead end for seven days. Without this it had to reach for
+    ``redis.delete(cache_key(url))`` itself, which spread this module's key
+    layout into a route — the one thing :func:`cache_key` exists to keep here.
+
+    ``url`` is the same plain-string spelling the other two take: always
+    ``str(request.url)``, never the ``AnyUrl``, or the three will not agree on a
+    key. Deleting a key that is not there is not an error; Redis reports zero
+    and so does this.
+    """
+    return bool(await redis.delete(cache_key(url)))

@@ -669,6 +669,56 @@ describe('service worker: GET_STATE and the article on screen', () => {
     await expect(harness.send({ type: 'GET_STATE' })).resolves.toMatchObject({ status: 'done' })
   })
 
+  it('treats a trailing slash as the same article — tab slashed, result not', async () => {
+    // The worker's half of the shared rule in src/shared/url.ts, pinned
+    // directly rather than only through the popup's tests.
+    //
+    // This is the side where the answer costs something. The popup only picks
+    // between two button labels; here a "different article" verdict RESETS a
+    // finished check to idle and the reader loses verdicts they waited for.
+    // The two used to carry a copy of the rule each and the copies had drifted
+    // — this side compared `pathname` verbatim — so a stored `/story` against
+    // a tab showing `/story/` binned the result while the popup went on
+    // calling them the same page. Both now import `sameArticle`; these cases
+    // are what stops a future edit from re-forking it.
+    const harness = stubWorkerChrome(DONE_STATE)
+    harness.tabUrl = `${ARTICLE.url}/`
+
+    await import('../src/background/index')
+
+    await expect(harness.send({ type: 'GET_STATE' })).resolves.toMatchObject({
+      status: 'done',
+      url: ARTICLE.url,
+    })
+    // The result survived in storage too, not just in the reply.
+    expect((harness.storage.session.job_state as JobState).status).toBe('done')
+  })
+
+  it('treats a trailing slash as the same article — result slashed, tab not', async () => {
+    // The other direction: the stored URL comes from the content script's
+    // `document.URL` and the compared one from `chrome.tabs`, and either may be
+    // the slashed spelling. The rule has to be symmetric.
+    const harness = stubWorkerChrome({ ...DONE_STATE, url: `${ARTICLE.url}/` })
+    harness.tabUrl = ARTICLE.url
+
+    await import('../src/background/index')
+
+    await expect(harness.send({ type: 'GET_STATE' })).resolves.toMatchObject({ status: 'done' })
+  })
+
+  it('still discards the result when only the query string differs', async () => {
+    // The negative control for the two above: the canonical form keeps the
+    // query verbatim because news CMSes put the article's identity in it
+    // (`?id=`, `?page=`). Normalising the trailing slash must not slide into
+    // normalising this, or one story's verdicts get shown over another's.
+    const harness = stubWorkerChrome(DONE_STATE)
+    harness.tabUrl = `${ARTICLE.url}?page=2`
+
+    await import('../src/background/index')
+
+    await expect(harness.send({ type: 'GET_STATE' })).resolves.toMatchObject({ status: 'idle' })
+  })
+
   it('does not discard a check that is still running', async () => {
     const harness = stubWorkerChrome()
     const actual = await vi.importActual<typeof import('../src/background/api')>(

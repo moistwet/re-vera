@@ -13,16 +13,26 @@ it into the ``id:`` field of each message.
 
 A record's sequence number *is* its 1-based position in the replay list, so the
 stored copy leaves ``seq`` out and :func:`replay_and_stream` reads it back from
-the position. That is what makes storing an event a single atomic step: one
-``RPUSH`` both appends the record and reports the number it was given, and a
-process that dies immediately afterwards leaves a complete record behind rather
-than a half-written one.
+the position. One ``RPUSH`` therefore both appends the finished record and
+reports the number it was given, and a process that dies immediately afterwards
+leaves a complete record behind rather than a half-written one.
+
+Storing that record, refreshing the job's TTLs and publishing the record all
+happen inside one Lua script (:data:`_PUBLISH_SCRIPT`), which is what keeps two
+separate promises at once. *Atomicity*: nothing can observe the list grown but
+un-expiring, and no client can be told about an event that is not in the replay
+list. *Ordering*: the number a record gets and the delivery of that record are
+one indivisible step, so two workers publishing for the same job can never have
+one overtake the other on the channel — which would be permanent data loss,
+because :func:`replay_and_stream` drops anything numbered at or below what it
+has already seen.
 
 A job also gets a marker key, ``job:{job_id}:started``, written by ``POST
 /check`` before the worker is spawned. It is what lets the stream endpoint tell
 "this job exists and may still have events coming" from "nobody ever started
 this id", which it must, because a stream opened on an id nobody started would
-otherwise wait for events that can never arrive.
+otherwise wait for events that can never arrive. The same script refreshes that
+marker, so it never expires out from under a job that is still talking.
 
 Nothing here reads settings or builds a Redis client: the caller passes the
 client in, so tests can hand these functions a fakeredis instance.
@@ -55,9 +65,16 @@ rather than holding a pub/sub connection open for a job that will never speak.
 """
 
 JOB_TTL_SECONDS = 3600
-"""How long a job's event list and its started marker survive after the job's
-last event. Both use the same window so a stream can never find the marker for a
-job whose events have already expired, or the reverse."""
+"""How long a job's event list and its started marker survive its last event.
+
+The window slides: every :func:`publish_event` re-issues ``EXPIRE`` on *both*
+keys in the same atomic step, so an hour is measured from the job's most recent
+event rather than from ``POST /check``. Refreshing them together is the point —
+a marker on a shorter clock than the events would let the stream endpoint 404 a
+job that is alive and still publishing, and events outliving their marker would
+be unreachable anyway. A job that never publishes anything expires an hour after
+:func:`mark_job_started` wrote the marker.
+"""
 
 TERMINAL_EVENTS = frozenset({"done", "error"})
 """Event names that close the stream; nothing follows them."""
@@ -71,13 +88,45 @@ _SUBSCRIBE_TIMEOUT_SECONDS = 5.0
 """How long to wait for the server to confirm a SUBSCRIBE before giving up on
 the confirmation and reading the replay list anyway."""
 
+_PUBLISH_SCRIPT = """
+-- Append one event to a job's replay list, refresh both of the job's TTLs and
+-- deliver the event to live subscribers — one indivisible, correctly ordered
+-- step. Returns the sequence number the record was given.
+--
+--   KEYS[1]  job:{id}:events    the replay list
+--   KEYS[2]  job:{id}:started   the marker POST /check wrote
+--   ARGV[1]  the record as JSON, with no "seq" key: {"event": ..., "data": ...}
+--   ARGV[2]  TTL in seconds for both keys
+--   ARGV[3]  the pub/sub channel (a channel is not a keyspace key, so it is an
+--            argument rather than a KEYS entry)
+local seq = redis.call('RPUSH', KEYS[1], ARGV[1])
+redis.call('EXPIRE', KEYS[1], ARGV[2])
+-- EXPIRE on a missing key is a no-op, so this refreshes a marker that exists
+-- and never invents one for a job nobody started.
+redis.call('EXPIRE', KEYS[2], ARGV[2])
+-- The published copy is the stored record with its number in front: ARGV[1] is
+-- a JSON object whose first key is "event", so replacing its opening brace with
+-- '{"seq": <n>, ' yields exactly the stored bytes plus the seq field.
+redis.call('PUBLISH', ARGV[3], '{"seq": ' .. seq .. ', ' .. string.sub(ARGV[1], 2))
+return seq
+"""
+"""Lua source for :func:`publish_event`.
+
+Lua rather than ``MULTI`` because only a script can use ``RPUSH``'s reply — the
+sequence number — inside the same atomic step that publishes it. A ``MULTI``
+cannot read its own results, which is why the previous implementation had to
+publish in a second round trip, and why two concurrent publishers could then
+deliver seq 4 before seq 3 and lose seq 3 to the stream's de-duplication.
+"""
+
 
 async def mark_job_started(redis: Redis, job_id: str) -> None:
     """Record that ``job_id`` was handed out and a worker was spawned for it.
 
     Called by ``POST /check`` before the background task starts, so a client
     that opens the stream the instant it gets the job id always finds the
-    marker.
+    marker. Written with the same TTL the job's events get, and refreshed by
+    every subsequent :func:`publish_event`, so the two keys expire together.
     """
     await redis.set(STARTED_KEY.format(job_id=job_id), "1", ex=JOB_TTL_SECONDS)
 
@@ -93,30 +142,36 @@ async def publish_event(redis: Redis, job_id: str, event: str, data: dict[str, A
     Returns the sequence number assigned to the record — RPUSH's new list
     length, so sequence numbers start at 1 and never skip.
 
-    Assigning the number and storing the record is one atomic step: ``RPUSH``
-    appends the finished record *and* reports the position it landed in, so
-    there is no window in which the list holds a row that does not yet say what
-    it is. The number is therefore never written into the stored copy — it is
-    that row's position, and :func:`replay_and_stream` reads it back from there.
-    ``EXPIRE`` rides along in the same ``MULTI`` so a stored event is never left
-    without its TTL.
+    Storing, expiring and publishing happen inside :data:`_PUBLISH_SCRIPT`, in
+    one indivisible step, which buys two things a two-round-trip version cannot
+    have together:
 
-    ``PUBLISH`` follows, deliberately outside the transaction: it is delivery,
-    not storage. A publish that fails costs a connected client nothing but a
-    wait, because the record is already in the replay list that every stream
-    reads first.
+    * **Atomicity.** ``RPUSH`` appends the finished record *and* reports the
+      position it landed in, so there is no window in which the list holds a row
+      that does not yet say what it is; the number is never written into the
+      stored copy, because it is that row's position and
+      :func:`replay_and_stream` reads it back from there. Both ``EXPIRE`` calls
+      ride along, so a stored event never sits without its TTL and the started
+      marker never expires while its job is still publishing.
+    * **Ordering.** The number a record is given and the delivery of that record
+      cannot be separated, so two coroutines publishing for the same job can
+      never let seq 4 reach the channel ahead of seq 3. That matters because
+      :func:`replay_and_stream` drops anything numbered at or below what it has
+      already yielded: an overtaken event would not be late, it would be gone.
+
+    The script is registered per call. ``register_script`` only wraps the source
+    with its SHA — no round trip — and the wrapper sends ``EVALSHA``, falling
+    back to ``EVAL`` once per server that has not cached it yet. That keeps this
+    module free of per-client state, which is what lets tests hand it a
+    throwaway fakeredis instance.
     """
-    key = EVENTS_KEY.format(job_id=job_id)
-    channel = CHANNEL.format(job_id=job_id)
-
-    async with redis.pipeline(transaction=True) as pipe:
-        pipe.rpush(key, json.dumps({"event": event, "data": data}))
-        pipe.expire(key, JOB_TTL_SECONDS)
-        length, _ = await pipe.execute()
-
-    seq = int(length)
-    await redis.publish(channel, json.dumps({"seq": seq, "event": event, "data": data}))
-    return seq
+    record = json.dumps({"event": event, "data": data})
+    publish = redis.register_script(_PUBLISH_SCRIPT)
+    seq = await publish(
+        keys=[EVENTS_KEY.format(job_id=job_id), STARTED_KEY.format(job_id=job_id)],
+        args=[record, JOB_TTL_SECONDS, CHANNEL.format(job_id=job_id)],
+    )
+    return int(seq)
 
 
 async def replay_and_stream(redis: Redis, job_id: str) -> AsyncIterator[dict[str, Any]]:

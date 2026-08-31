@@ -32,6 +32,12 @@ import {
   type JobState,
   type StateMessage,
 } from '../shared/messages'
+// The same-article rule is shared with the popup on purpose. This side decides
+// whether to DISCARD a finished result; the popup side only labels a button.
+// When they were separate copies they drifted (the popup normalised trailing
+// slashes, this did not), and the stricter copy was the one that threw work
+// away — see src/shared/url.ts.
+import { sameArticle } from '../shared/url'
 import type { Claim, ClaimsFoundEvent, DoneEvent, ErrorEvent } from '../types/schema'
 import { ApiError, openStream, postCheck } from './api'
 import { getInstallId } from './installId'
@@ -389,29 +395,6 @@ async function activeTabUrl(): Promise<string | null> {
     return tab?.url ?? null
   } catch {
     return null
-  }
-}
-
-/**
- * Whether two URLs name the same article.
- *
- * The fragment is ignored: the reader jumping to `#comments` is still the same
- * page, and the stored URL comes from the content script's `document.URL` while
- * the compared one comes from `chrome.tabs`, which need not agree on it.
- * Anything unparseable falls back to an exact string comparison.
- */
-function sameArticle(a: string, b: string): boolean {
-  if (a === b) return true
-  try {
-    const left = new URL(a)
-    const right = new URL(b)
-    return (
-      left.origin === right.origin &&
-      left.pathname === right.pathname &&
-      left.search === right.search
-    )
-  } catch {
-    return false
   }
 }
 

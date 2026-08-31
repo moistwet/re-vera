@@ -38,6 +38,10 @@ import {
   type StartCheckMessage,
   type StateMessage,
 } from '../shared/messages'
+// One rule, shared with the service worker. The popup only labels a button with
+// the answer; the worker discards a finished result with it. A private copy here
+// is how the two drifted last time — see src/shared/url.ts.
+import { sameArticle } from '../shared/url'
 import type { Claim } from '../types/schema'
 import ClaimRow from './ClaimRow'
 import Stepper from './Stepper'
@@ -418,7 +422,19 @@ function ArticleCard({
 /* -------------------------------------------------------------------------- */
 
 interface Row {
-  /** React key. Stable across a row's pending → resolved transition. */
+  /**
+   * React key — the row's *position*, never the claim's id.
+   *
+   * Row n is `claim_ids[n]` by construction, so the index IS the row's
+   * identity, and it is the only identity available on both sides of the two
+   * transitions a row goes through. Keying by id looked more precise and was
+   * strictly worse: on a cache hit `POST /check` answers with
+   * `claim_count: 6` while `claim_ids` is still unknown, so the list rendered
+   * six `pending-0…5` rows and then, the instant `claims_found` landed, six
+   * `c1…c6` rows. Six new keys means React unmounts and remounts every row —
+   * a full flash on the one path (a cache hit) that is meant to feel instant.
+   * With the index, the same six `<li>` nodes simply gain their content.
+   */
   key: string
   /** 1-based position in the article, for "Claim 3 of 6". */
   index: number
@@ -459,24 +475,35 @@ function ClaimList({ claims, claimIds, claimCount }: ClaimListProps): ReactEleme
  * whose id is not in the list is ignored rather than appended: an unexpected id
  * is a bug on the wire, not a seventh row.
  *
- * Without usable ids — an older backend, an older persisted state — the rows
- * fall back to `claim.start` order, which lands in the right place once
- * everything has arrived even though earlier rows may be rewritten on the way.
+ * Without usable ids — an older backend, an older persisted state, or the brief
+ * moment on a cache hit when `claim_count` is known and `claims_found` has not
+ * arrived — the rows fall back to `claim.start` order, which lands in the right
+ * place once everything has arrived even though earlier rows may be rewritten on
+ * the way.
+ *
+ * Both branches key by position, which is what lets a row survive the crossing
+ * between them: see the note on `Row.key`.
  */
 function buildRows(claims: Claim[], claimIds: string[] | null, claimCount: number | null): Row[] {
   const expected = Math.max(claimCount ?? 0, 0)
 
   if (claimIds !== null && claimIds.length >= expected) {
     const byId = new Map(claims.map((claim) => [claim.id, claim]))
-    return claimIds.map((id, i) => ({ key: id, index: i + 1, claim: byId.get(id) ?? null }))
+    return claimIds.map((id, i) => ({ key: rowKey(i), index: i + 1, claim: byId.get(id) ?? null }))
   }
 
   const ordered = [...claims].sort((a, b) => a.start - b.start)
   const total = Math.max(expected, ordered.length)
-  return Array.from({ length: total }, (_, i) => {
-    const claim = ordered[i] ?? null
-    return { key: claim?.id ?? `pending-${i}`, index: i + 1, claim }
-  })
+  return Array.from({ length: total }, (_, i) => ({
+    key: rowKey(i),
+    index: i + 1,
+    claim: ordered[i] ?? null,
+  }))
+}
+
+/** The row's identity: where it sits in the article. */
+function rowKey(index: number): string {
+  return `row-${index}`
 }
 
 /* -------------------------------------------------------------------------- */
@@ -487,26 +514,6 @@ function buildRows(claims: Claim[], claimIds: string[] | null, claimCount: numbe
 function siteLabel(url: string): string | null {
   try {
     return new URL(url).hostname.replace(/^www\./, '')
-  } catch {
-    return null
-  }
-}
-
-/**
- * Same article, for the done state's button label only.
- *
- * The fragment and a trailing slash never change which article a URL names, so
- * they are dropped; the query string can (`?page=2`), so it is kept.
- */
-function sameArticle(a: string, b: string): boolean {
-  const left = canonicalUrl(a)
-  return left !== null && left === canonicalUrl(b)
-}
-
-function canonicalUrl(raw: string): string | null {
-  try {
-    const url = new URL(raw)
-    return `${url.protocol}//${url.host}${url.pathname.replace(/\/+$/, '')}${url.search}`
   } catch {
     return null
   }

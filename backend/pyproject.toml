@@ -23,7 +23,12 @@ dev = [
     "pytest>=8.2",
     "pytest-asyncio>=0.24",
     "httpx>=0.27",
-    "fakeredis>=2.23",
+    # The `lua` extra pulls lupa, which is what lets fakeredis run EVAL/EVALSHA.
+    # app/events.py publishes through a Lua script, so without it every call in
+    # the event core fails with `unknown command 'evalsha'` and the suite is red
+    # on a fresh checkout. Not optional — it is a test-time dependency of the
+    # code under test.
+    "fakeredis[lua]>=2.23",
     "ruff>=0.6",
     "mypy>=1.11",
     "datamodel-code-generator>=0.26",

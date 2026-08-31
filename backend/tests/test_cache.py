@@ -17,7 +17,7 @@ from urllib.parse import urlparse
 
 from fakeredis.aioredis import FakeRedis
 
-from app.cache import CACHE_TTL_SECONDS, cache_key, get_check, set_check
+from app.cache import CACHE_TTL_SECONDS, cache_key, delete_check, get_check, set_check
 from app.schema_models import CheckRequest
 
 RESERVED_HOST = "example.com"
@@ -177,3 +177,41 @@ async def test_overwriting_replaces_the_entry(fake_redis: FakeRedis) -> None:
     await set_check(fake_redis, URL, replacement)
 
     assert await get_check(fake_redis, URL) == replacement
+
+
+async def test_delete_removes_the_entry_and_reports_that_it_did(fake_redis: FakeRedis) -> None:
+    """``delete_check`` clears the key ``set_check`` wrote, and says so.
+
+    This is how a poisoned entry is dropped
+    (``app.routes.check.usable_cache_entry``): the route used to reach past this
+    module and issue ``redis.delete(cache_key(url))`` itself, which put the key
+    layout in two places.
+    """
+    await set_check(fake_redis, URL, RESULT)
+
+    assert await delete_check(fake_redis, URL) is True
+    assert await get_check(fake_redis, URL) is None
+    assert await fake_redis.exists(cache_key(URL)) == 0
+
+
+async def test_deleting_a_url_that_was_never_cached_is_not_an_error(
+    fake_redis: FakeRedis,
+) -> None:
+    """A miss deletes nothing and returns False rather than raising."""
+    assert await delete_check(fake_redis, URL) is False
+
+
+async def test_delete_only_touches_the_url_it_is_given(fake_redis: FakeRedis) -> None:
+    """Healing one entry must not empty the cache for every other article.
+
+    Without this, a ``delete_check`` that flushed anything broader would still
+    satisfy the test above while quietly turning the 7-day cache off.
+    """
+    other = {"claims": [], "counts": {}, "checked_at": "2026-08-30T00:00:00Z"}
+    await set_check(fake_redis, URL, RESULT)
+    await set_check(fake_redis, OTHER_URL, other)
+
+    await delete_check(fake_redis, URL)
+
+    assert await get_check(fake_redis, URL) is None
+    assert await get_check(fake_redis, OTHER_URL) == other

@@ -28,8 +28,10 @@ from fakeredis.aioredis import FakeRedis
 from fastapi import FastAPI
 
 import app.routes.check as check_route
+from app.cache import cache_key, get_check, set_check
 from app.config import Settings
 from app.events import mark_job_started
+from app.invariants import validate_claims
 from app.limits import CAP_KEY, singapore_today
 from app.pipeline.mock import RESOLVE_ORDER, load_fixture_claims, tally
 from app.schema_models import Claim, ClaimsFoundEvent, DoneEvent, ErrorEvent
@@ -354,6 +356,159 @@ async def test_a_different_url_is_not_served_from_the_cache(
 
     other = {**check_request_body, "url": "https://www.channelnewsasia.com/singapore/other-story"}
     assert (await client.post("/check", json=other)).json()["cached"] is False
+
+
+# --------------------------------------------------------- the poisoned cache
+
+
+def poisoned_claim(claim: dict[str, Any]) -> dict[str, Any]:
+    """A claim that is schema-valid but breaks a product invariant.
+
+    ``unverifiable`` with the confidence and sources it kept from a real
+    verdict — the exact shape ``shared/schema.json`` cannot forbid and
+    :mod:`app.invariants` exists to catch (rules 2 and 3, decisions 4 and 5).
+    """
+    poisoned = {**claim, "verdict": "unverifiable"}
+    assert poisoned["confidence"] is not None
+    assert poisoned["sources"]
+    return poisoned
+
+
+async def seed_poisoned_cache(
+    fake_redis: FakeRedis, url: str, fixture_claims: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """Write a cache entry holding one illegal claim, as a bad build would have."""
+    entry = {
+        "claims": [poisoned_claim(fixture_claims[0]), *fixture_claims[1:]],
+        "counts": EXPECTED_COUNTS,
+        "checked_at": "2026-08-24T00:00:00Z",
+    }
+    await set_check(fake_redis, url, entry)
+    assert await fake_redis.get(cache_key(url)) is not None
+    return entry
+
+
+async def test_a_poisoned_cache_entry_is_re_checked_not_replayed(
+    client: httpx.AsyncClient,
+    fake_redis: FakeRedis,
+    check_request_body: dict[str, str],
+    fixture_claims: list[dict[str, Any]],
+) -> None:
+    """A cache entry that breaks an invariant must not become a seven-day dead end.
+
+    ``replay_cached`` validates every claim on its way out, so an entry holding
+    an illegal claim publishes ``error`` instead of the check. If the POST had
+    already committed to the hit — returned before charging the cap and before
+    spawning the pipeline — nothing would ever re-run the article, and every
+    reader who opened that URL would get the same error until the 7-day TTL
+    expired. So the entry is validated *before* the hit is taken: a breach
+    deletes it and falls through to the miss branch.
+    """
+    url = check_request_body["url"]
+    await seed_poisoned_cache(fake_redis, url, fixture_claims)
+
+    response = await client.post("/check", json=check_request_body)
+    assert response.status_code == 200
+    job = response.json()
+
+    # Treated as a miss, not as a hit whose replay happens to fail.
+    assert job["cached"] is False
+    assert job["claim_count"] is None
+
+    # The reader gets a normal, successful check.
+    records = await read_stream(client, job["job_id"])
+    assert [record["event"] for record in records] == (
+        ["claims_found"] + ["claim"] * EXPECTED_CLAIM_COUNT + ["done"]
+    )
+    assert "error" not in [record["event"] for record in records]
+    assert DoneEvent.model_validate(records[-1]["data"]).counts.model_dump() == EXPECTED_COUNTS
+
+    # …and it was charged as a miss: the pipeline really ran.
+    key = CAP_KEY.format(install_id=check_request_body["install_id"], day=singapore_today())
+    assert await fake_redis.get(key) == "1"
+
+
+async def test_a_poisoned_cache_entry_is_removed_and_replaced(
+    client: httpx.AsyncClient,
+    fake_redis: FakeRedis,
+    check_request_body: dict[str, str],
+    fixture_claims: list[dict[str, Any]],
+) -> None:
+    """The corrupt entry is gone afterwards, and the cache heals itself.
+
+    The re-check writes its own result over the key, so the *next* reader gets a
+    clean cache hit rather than paying for the same re-check again.
+    """
+    url = check_request_body["url"]
+    await seed_poisoned_cache(fake_redis, url, fixture_claims)
+
+    first = (await client.post("/check", json=check_request_body)).json()
+    await read_stream(client, first["job_id"])
+
+    healed = await get_check(fake_redis, url)
+    assert healed is not None
+    validate_claims(healed["claims"])  # raises if the poison survived
+    assert [claim["id"] for claim in healed["claims"]] == EXPECTED_CLAIM_IDS
+    assert healed["claims"] == fixture_claims
+    assert healed["counts"] == EXPECTED_COUNTS
+
+    second = (await client.post("/check", json=check_request_body)).json()
+    assert second["cached"] is True
+    assert second["claim_count"] == EXPECTED_CLAIM_COUNT
+    replayed = await read_stream(client, second["job_id"])
+    assert [record["event"] for record in replayed] == (
+        ["claims_found"] + ["claim"] * EXPECTED_CLAIM_COUNT + ["done"]
+    )
+
+
+async def test_usable_cache_entry_deletes_the_key_it_rejects(
+    fake_redis: FakeRedis,
+    check_request_body: dict[str, str],
+    fixture_claims: list[dict[str, Any]],
+) -> None:
+    """The helper itself: a breach returns None *and* clears the key.
+
+    Asserted directly rather than through the endpoint because the re-check
+    immediately writes a fresh entry over the same key, which would hide a
+    version of this that returned None without deleting anything — and that
+    version leaves the poison in place for any request that fails before the
+    pipeline finishes.
+    """
+    url = check_request_body["url"]
+    await seed_poisoned_cache(fake_redis, url, fixture_claims)
+
+    assert await check_route.usable_cache_entry(fake_redis, url) is None
+    assert await fake_redis.get(cache_key(url)) is None
+    assert await get_check(fake_redis, url) is None
+
+
+async def test_usable_cache_entry_keeps_a_healthy_entry(
+    fake_redis: FakeRedis,
+    check_request_body: dict[str, str],
+    fixture_claims: list[dict[str, Any]],
+) -> None:
+    """The other half: a legal entry is returned untouched, key and all.
+
+    Without this, "delete everything" would pass the test above and quietly
+    turn the 7-day cache off.
+    """
+    url = check_request_body["url"]
+    entry = {
+        "claims": fixture_claims,
+        "counts": EXPECTED_COUNTS,
+        "checked_at": "2026-08-24T00:00:00Z",
+    }
+    await set_check(fake_redis, url, entry)
+
+    assert await check_route.usable_cache_entry(fake_redis, url) == entry
+    assert await fake_redis.get(cache_key(url)) is not None
+
+
+async def test_an_unknown_url_is_still_a_plain_miss(
+    fake_redis: FakeRedis, check_request_body: dict[str, str]
+) -> None:
+    """No entry at all is None, with nothing to delete."""
+    assert await check_route.usable_cache_entry(fake_redis, check_request_body["url"]) is None
 
 
 # ------------------------------------------------------------- the daily limit

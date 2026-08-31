@@ -67,10 +67,40 @@ Change it and you must rebuild and reload the unpacked extension.
 manifest.config.ts        MV3 manifest (name, permissions, popup, service worker)
 src/types/schema.ts       GENERATED from shared/schema.json — do not hand-edit
 src/shared/messages.ts    typed popup ↔ background ↔ content-script messages
+src/shared/url.ts         the one "same article?" rule (see below)
 src/background/           service worker: the only thing that calls the backend
 src/content/extract.ts    injected on click, never at install
 src/popup/                React popup (ready → checking → done → error)
 ```
+
+### One same-article rule, shared
+
+`src/shared/url.ts` owns the whole answer to "do these two URLs name the same
+article?", and both callers import it:
+
+- the **service worker**, which uses it to decide whether the finished result it
+  is holding belongs to the page the popup just opened over — a mismatch throws
+  the result away;
+- the **popup's done state**, which uses it only to decide whether the button
+  reads "Check again" or "Check this article".
+
+They previously held a copy each, and the copies had drifted: the popup
+normalised trailing slashes and the worker did not, so a stored `/story/` against
+a tab showing `/story` made the worker discard a completed check that the popup
+would have kept. The canonical form is `protocol//host` + path (trailing slashes
+stripped) + query string **kept verbatim** — news sites put the article's
+identity in the query (`?id=`, `?page=`), so dropping it would let one story's
+verdicts be shown over another's. The file's header comment argues each part.
+
+Both halves are pinned directly, on purpose — a shared import is what makes the
+two agree, but only tests on both sides prove they still do. The trailing-slash
+case runs in each direction against the popup (`tests/popup.test.tsx`, "done
+state") and against the worker's `dropStaleResult` (`tests/background.test.ts`,
+"GET_STATE and the article on screen"), each with a differing-query-string
+negative control so that normalising the slash can never quietly widen into
+normalising the query. Breaking the rule in `src/shared/url.ts` fails tests in
+both files at once. Anyone adding a third place that asks "same article?" should
+import from `src/shared/url.ts` rather than reimplement it.
 
 ### The content script is injected, never declared
 
@@ -102,12 +132,19 @@ than a stable `chrome-extension://<permanent id>/…` URL that any page could
 fetch to learn the reader has Re-Vera installed (CLAUDE.md rule 6).
 
 **That control only exists on the production build.** Under `pnpm dev`, CRXJS's
-serve-mode plugin pushes its own web-accessible-resources entry
+serve-mode plugin unconditionally pushes its own web-accessible-resources entry
 (`{ matches: ['<all_urls>'], resources: ['**/*', '*'], use_dynamic_url: false }`)
 that `manifest.config.ts` cannot override. A dev-loaded extension therefore
 exposes every file to every origin at a stable URL. It is CRXJS behaviour, it
 does not reach the shipped bundle, and the fix is simply to review the right
-artefact: run `pnpm build` and inspect `dist/manifest.json`.
+artefact: **a privacy review must inspect `pnpm build` output — run `pnpm build`
+and read `dist/manifest.json` — never a `pnpm dev` load.**
+
+`tests/manifest.test.ts` pins the production shape so a future edit cannot drop
+it silently: manifest v3, `use_dynamic_url: true` on every web-accessible
+resource, no `content_scripts` key, no `<all_urls>` in `host_permissions`, and
+exactly the four permissions. It calls the `defineManifest` callback the way
+Vite does, so it asserts on the same object `pnpm build` writes.
 
 ### Regenerating the shared schema
 

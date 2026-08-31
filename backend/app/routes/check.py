@@ -3,7 +3,10 @@
 The POST is deliberately cheap: it looks the article up in the 7-day URL cache,
 charges the per-install daily cap only when that misses, starts a background
 job, and returns a ``job_id`` straight away. Everything the reader sees arrives
-over the SSE stream that the GET relays from Redis.
+over the SSE stream that the GET relays from Redis. A cached entry whose claims
+break a product invariant is deleted and treated as a miss rather than replayed
+(:func:`usable_cache_entry`), so a poisoned entry costs one re-check instead of
+seven days of errors.
 
 Wire format for the stream — one blank line terminates each message::
 
@@ -46,7 +49,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 from redis.asyncio import Redis
 
-from app.cache import cache_key, get_check
+from app.cache import delete_check, get_check
 from app.config import Settings, get_settings
 from app.events import job_exists, mark_job_started, replay_and_stream
 from app.invariants import ClaimInvariantError, validate_claims
@@ -161,6 +164,45 @@ async def start_check(payload: CheckRequest, redis: RedisDep, settings: Settings
     await mark_job_started(redis, job_id)
     _spawn(run_mock_pipeline(redis, job_id, payload, settings=settings))
     return CheckJob(job_id=job_id, cached=False, claim_count=None)
+
+
+async def usable_cache_entry(redis: Redis, url: str) -> dict[str, Any] | None:
+    """Return the cached result for ``url``, or None if there is nothing usable.
+
+    A cache hit is a commitment: :func:`start_check` returns on it without
+    charging the cap or spawning the pipeline, so whatever the entry holds is
+    what every reader of that URL gets for the rest of the seven-day TTL. That
+    makes an unusable entry far worse than a miss. If a stored claim breaks one
+    of the two product invariants (:mod:`app.invariants`) — an entry written by
+    an older build, or corrupted in place — then :func:`replay_cached` raises
+    part-way through, the reader sees ``error``, and because nothing re-runs the
+    article the next reader sees exactly the same error, and the next, until the
+    key expires. Nothing short of manual surgery on Redis could clear it.
+
+    So the claims are validated *before* the hit is taken. On a breach the entry
+    is deleted and None is returned, which drops :func:`start_check` into its
+    miss branch: the cap is charged, the pipeline runs, and the fresh result
+    overwrites what was there. One reader gets a slow check instead of every
+    reader getting a dead end, and the cache heals itself.
+
+    Only the offending claim's id and the rule it broke are logged. Neither is
+    article text, and no install id is in scope here, so this cannot join a URL
+    to a reader (brief, privacy rule 6).
+    """
+    cached = await get_check(redis, url)
+    if cached is None:
+        return None
+    try:
+        validate_claims(cached.get("claims") or [])
+    except ClaimInvariantError as exc:
+        logger.warning(
+            "dropping a cache entry: claim %s breaks a product rule (%s); re-checking",
+            exc.claim_id,
+            exc.problem,
+        )
+        await delete_check(redis, url)
+        return None
+    return cached
 
 
 @router.get("/check/{job_id}/stream", summary="Server-sent events for one check job")
