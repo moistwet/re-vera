@@ -1,0 +1,22 @@
+# Re-Vera backend — local Redis only.
+#
+#   docker compose up redis        (add -d to background it)
+#
+# This dev environment also ships a native redis-server at /usr/bin/redis-server,
+# so `redis-server --daemonize yes` is an equally good way to get a Redis on
+# 6379 without Docker. See backend/README.md.
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: re-vera-redis
+    ports:
+      - "6379:6379"
+    # Ephemeral cache: nothing here is worth persisting between runs.
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
