@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet data-dc-atomics>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cabin:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#EDF0EF;font-family:'IBM Plex Sans',system-ui,sans-serif}
+a{color:#12766B}a:hover{color:#0D5A51}
+@keyframes hlSettle{from{background-color:rgba(28,37,35,.16)}to{}}
+@keyframes flipIn{from{transform:rotateX(70deg);opacity:0}to{transform:rotateX(0);opacity:1}}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+@keyframes cardIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+@keyframes panelIn{from{transform:translateX(360px)}to{transform:none}}
+@media (prefers-reduced-motion: reduce){*{animation:none!important;transition:none!important}}
+</style>
+</helmet>
+<div style="min-height:100vh;display:flex;flex-direction:column;align-items:center;gap:14px;padding:24px 16px 48px">
+  <div style="width:min(1100px,100%);display:flex;align-items:center;gap:10px;font-size:12px;color:#5B6663">
+    <span style="font:600 11px Cabin,sans-serif;letter-spacing:.06em;padding:3px 8px;background:#1C2523;color:#fff;border-radius:4px">DEMO</span>
+    <span>Sieve theme:</span>
+    <button onClick="{{setLight}}" style="{{lightBtnStyle}}">Light</button>
+    <button onClick="{{setDark}}" style="{{darkBtnStyle}}">Dark</button>
+    <span style="flex:1"></span>
+    <button onClick="{{reset}}" style="border:1px solid #C9D1CE;background:#fff;border-radius:6px;padding:4px 12px;font:500 12px 'IBM Plex Sans';color:#3d4744;cursor:pointer">Reset demo</button>
+  </div>
+
+  <div style="width:min(1100px,100%);border-radius:12px;overflow:hidden;box-shadow:0 8px 32px rgba(20,30,28,.14);border:1px solid rgba(0,0,0,.08)">
+    <div style="height:44px;background:#DEE3E1;display:flex;align-items:center;gap:10px;padding:0 14px">
+      <div style="display:flex;gap:6px"><span style="width:11px;height:11px;border-radius:50%;background:#D9857C"></span><span style="width:11px;height:11px;border-radius:50%;background:#DCC57F"></span><span style="width:11px;height:11px;border-radius:50%;background:#9BC29A"></span></div>
+      <div style="flex:1;max-width:520px;height:28px;background:#fff;border-radius:14px;display:flex;align-items:center;padding:0 14px;font:12.5px 'IBM Plex Sans';color:#5B6663;gap:6px">
+        <svg width="11" height="11" viewBox="0 0 12 12" fill="none"><rect x="2" y="5" width="8" height="6" rx="1.2" stroke="#8A948F" stroke-width="1.3"></rect><path d="M4 5V3.6a2 2 0 014 0V5" stroke="#8A948F" stroke-width="1.3"></path></svg>
+        news.yahoo.com/hawker-stall-rents-rise-vendors
+      </div>
+      <span style="flex:1"></span>
+      <button onClick="{{togglePopup}}" title="Sieve" style="{{iconBtnStyle}}">
+        <svg width="18" height="18" viewBox="0 0 20 20" fill="none"><path d="M3 4h14L12.5 10v5.2L7.5 17v-7z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"></path><path d="M6.2 7.2h7.6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"></path></svg>
+        <sc-if value="{{badgeVisible}}" hint-placeholder-val="{{false}}"><span style="position:absolute;top:2px;right:2px;min-width:15px;height:15px;border-radius:8px;background:#C24A32;color:#fff;font:600 10px 'IBM Plex Sans';display:flex;align-items:center;justify-content:center;padding:0 3px">6</span></sc-if>
+      </button>
+    </div>
+
+    <div style="{{pageWrapStyle}}">
+      <sc-if value="{{barVisible}}" hint-placeholder-val="{{false}}">
+        <sc-if value="{{barExpanded}}" hint-placeholder-val="{{false}}">
+        <div style="position:absolute;top:0;left:0;right:0;height:42px;z-index:30;display:flex;align-items:center;gap:10px;padding:0 14px;background:#1C2523;color:#fff;font:13px system-ui,sans-serif;box-shadow:0 2px 8px rgba(0,0,0,.18)">
+          <svg width="15" height="15" viewBox="0 0 20 20" fill="none"><path d="M3 4h14L12.5 10v5.2L7.5 17v-7z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"></path></svg>
+          <span style="font-weight:600;white-space:nowrap">{{barLabel}}</span>
+          <span style="opacity:.75;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{barCounts}}</span>
+          <span style="flex:1"></span>
+          <sc-if value="{{gameActive}}" hint-placeholder-val="{{false}}">
+            <button onClick="{{reveal}}" style="border:none;background:#fff;color:#1C2523;border-radius:6px;padding:5px 14px;font:600 12.5px system-ui,sans-serif;cursor:pointer">Reveal</button>
+          </sc-if>
+          <sc-if value="{{gameInactive}}" hint-placeholder-val="{{false}}">
+            <button onClick="{{fullReport}}" style="border:1px solid rgba(255,255,255,.4);background:transparent;color:#fff;border-radius:6px;padding:4px 12px;font:500 12.5px system-ui,sans-serif;cursor:pointer;white-space:nowrap;flex:none">Full report</button>
+          </sc-if>
+          <button onClick="{{closeBar}}" style="border:none;background:transparent;color:#fff;opacity:.7;cursor:pointer;font-size:14px;padding:2px 4px">✕</button>
+        </div>
+        </sc-if>
+        <sc-if value="{{barCollapsed}}" hint-placeholder-val="{{false}}">
+          <button onClick="{{expandBar}}" style="position:absolute;top:10px;left:50%;transform:translateX(-50%);z-index:30;display:flex;align-items:center;gap:6px;border:none;background:#1C2523;color:#fff;border-radius:999px;padding:5px 13px;font:600 12px system-ui,sans-serif;cursor:pointer;box-shadow:0 2px 10px rgba(0,0,0,.25)">
+            <svg width="12" height="12" viewBox="0 0 20 20" fill="none"><path d="M3 4h14L12.5 10v5.2L7.5 17v-7z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"></path></svg>{{pillLabel}}
+          </button>
+        </sc-if>
+      </sc-if>
+
+      <div onScroll="{{onScroll}}" ref="{{scrollRef}}" style="height:640px;overflow:auto;position:relative;background:#fff">
+        <div style="border-bottom:1px solid #ECECEC;padding:14px 24px;display:flex;align-items:baseline;gap:22px">
+          <span style="font:700 17px Cabin,sans-serif;letter-spacing:-.01em;color:#3B3B3B">yahoo<span style="color:#7B5EA7">!</span>news</span>
+          <span style="font:12.5px system-ui,sans-serif;color:#8A8A8A">Singapore · World · Business · Lifestyle</span>
+        </div>
+        <div style="max-width:660px;margin:0 auto;padding:34px 24px 90px">
+          <sc-if value="{{siteScoreOpen}}" hint-placeholder-val="{{false}}">
+            <div style="display:flex;align-items:center;gap:18px;background:#F7F9F8;border:1px solid #E2E8E5;border-radius:12px;padding:14px 18px;margin:0 0 26px;animation:cardIn .45s ease-out;font-family:system-ui,sans-serif">
+              <div style="position:relative;width:68px;height:68px;flex:none">
+                <svg width="68" height="68" viewBox="0 0 68 68">
+                  <circle cx="34" cy="34" r="26" fill="none" stroke="#E7ECEA" stroke-width="6"></circle>
+                  <circle cx="34" cy="34" r="26" fill="none" stroke="{{ringColor}}" stroke-width="6" stroke-linecap="round" stroke-dasharray="163.4" stroke-dashoffset="{{ringOffset}}" transform="rotate(-90 34 34)"></circle>
+                </svg>
+                <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font:700 17px system-ui,sans-serif;color:{{ringColor}}">{{ringPct}}</div>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:3px;min-width:0">
+                <div style="display:flex;align-items:center;gap:8px">
+                  <svg width="13" height="13" viewBox="0 0 20 20" fill="none"><path d="M3 4h14L12.5 10v5.2L7.5 17v-7z" stroke="#1C2523" stroke-width="1.7" stroke-linejoin="round"></path></svg>
+                  <span style="font:600 11px system-ui,sans-serif;color:#5B6663;letter-spacing:.06em;white-space:nowrap">SIEVE RELIABILITY SCORE</span>
+                </div>
+                <div style="font:600 16px system-ui,sans-serif;color:#1C2523">{{ringTier}}</div>
+                <div style="font:12.5px/1.5 system-ui,sans-serif;color:#5B6663">Based on 5 checkable claims: 2 supported, 2 contradicted, 1 missing context. 1 claim couldn’t be verified and isn’t counted.</div>
+              </div>
+            </div>
+          </sc-if>
+          <h1 style="font:700 30px/1.25 Georgia,serif;color:#222;margin:0 0 10px">Hawker stall rents to rise 40% next year, vendors say</h1>
+          <div style="font:13px system-ui,sans-serif;color:#8A8A8A;margin:0 0 26px">Wire report · Republished on Yahoo · 2 hours ago</div>
+          <p style="font:17px/1.75 Georgia,serif;color:#2A2A2A;margin:0 0 18px">Hawker stall rents across the island are set to <span onClick="{{c1.onClick}}" style="{{c1.style}}">rise by 40% from 1 January</span>, according to vendors who spoke to reporters this week.</p>
+          <p style="font:17px/1.75 Georgia,serif;color:#2A2A2A;margin:0 0 18px"><span onClick="{{c2.onClick}}" style="{{c2.style}}">More than 200 stalls have already closed this year</span>, the vendors said, blaming rising costs.</p>
+          <p style="font:17px/1.75 Georgia,serif;color:#2A2A2A;margin:0 0 18px"><span onClick="{{c3.onClick}}" style="{{c3.style}}">The last islandwide rent adjustment took effect in 2024</span>.</p>
+          <p style="font:17px/1.75 Georgia,serif;color:#2A2A2A;margin:0 0 18px">A recent survey found that <span onClick="{{c4.onClick}}" style="{{c4.style}}">eight in ten hawkers are considering leaving</span> the trade.</p>
+          <p style="font:17px/1.75 Georgia,serif;color:#2A2A2A;margin:0 0 18px">An official spokesperson was quoted as saying rents “<span onClick="{{c5.onClick}}" style="{{c5.style}}">will not be capped under any circumstances</span>.”</p>
+          <p style="font:17px/1.75 Georgia,serif;color:#2A2A2A;margin:0 0 18px"><span onClick="{{c6.onClick}}" style="{{c6.style}}">The review takes effect on 1 January</span>.</p>
+        </div>
+
+        <sc-if value="{{cardOpen}}" hint-placeholder-val="{{false}}">
+          <div style="{{cardStyle}}">
+            <div style="display:flex;align-items:center;gap:8px">
+              <span style="{{card.pillStyle}}">
+                <sc-if value="{{card.isSup}}" hint-placeholder-val="{{false}}"><svg width="13" height="13" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.5" stroke="currentColor" stroke-width="1.5"></circle><path d="M5.2 8.2l2 2 3.6-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path></svg></sc-if>
+                <sc-if value="{{card.isCon}}" hint-placeholder-val="{{false}}"><svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M5.4 1.9h5.2l3.5 3.5v5.2l-3.5 3.5H5.4L1.9 10.6V5.4z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"></path><path d="M6 6l4 4M10 6l-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"></path></svg></sc-if>
+                <sc-if value="{{card.isMis}}" hint-placeholder-val="{{false}}"><svg width="13" height="13" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.5" stroke="currentColor" stroke-width="1.5"></circle><path d="M8 1.5a6.5 6.5 0 000 13z" fill="currentColor" opacity=".25"></path><path d="M8 7v3.4M8 5.2v.2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"></path></svg></sc-if>
+                <sc-if value="{{card.isUnv}}" hint-placeholder-val="{{false}}"><svg width="13" height="13" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.5" stroke="currentColor" stroke-width="1.5"></circle><path d="M6.4 6.2c0-1 .7-1.7 1.6-1.7s1.6.6 1.6 1.5c0 1.2-1.6 1.3-1.6 2.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"></path><path d="M8 11v.2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"></path></svg></sc-if>
+                {{card.label}}
+              </span>
+              <sc-if value="{{card.hasConf}}" hint-placeholder-val="{{false}}">
+                <span style="display:inline-flex;align-items:center;gap:4px">
+                  <span style="{{card.dot1}}"></span><span style="{{card.dot2}}"></span><span style="{{card.dot3}}"></span>
+                  <span style="font:11.5px system-ui,sans-serif;color:var(--s-mut);margin-left:2px">{{card.confWord}}</span>
+                </span>
+              </sc-if>
+              <span style="flex:1"></span>
+              <button onClick="{{closeCard}}" style="border:none;background:transparent;color:var(--s-mut);cursor:pointer;font-size:14px;padding:2px">✕</button>
+            </div>
+            <div style="font:italic 400 14px/1.5 system-ui,sans-serif;color:var(--s-ink);border-left:2px solid var(--s-brd);padding-left:10px">“{{card.quote}}”</div>
+            <div style="display:flex;flex-direction:column;gap:5px">
+              <div style="font:600 11px system-ui,sans-serif;color:var(--s-mut);letter-spacing:.05em">WHAT THE EVIDENCE SAYS</div>
+              <div style="font:400 14px/1.55 system-ui,sans-serif;color:var(--s-ink)">{{card.evidence}}</div>
+            </div>
+            <sc-if value="{{card.hasTrail}}" hint-placeholder-val="{{false}}">
+            <div style="display:flex;flex-direction:column;background:var(--s-soft);border-radius:8px;padding:12px 14px">
+              <sc-for list="{{card.trail}}" as="node" hint-placeholder-count="0">
+                <div style="display:flex;flex-direction:column">
+                  <div style="{{node.lineStyle}}"></div>
+                  <div style="display:flex;align-items:baseline;gap:9px">
+                    <span style="width:7px;height:7px;border-radius:50%;background:var(--s-ink);flex:none;position:relative;top:-1px"></span>
+                    <span style="font:600 13px system-ui,sans-serif;color:var(--s-ink);white-space:nowrap">{{node.title}}</span>
+                    <span style="font:12.5px system-ui,sans-serif;color:var(--s-mut)">{{node.note}}</span>
+                  </div>
+                </div>
+              </sc-for>
+            </div>
+            </sc-if>
+            <sc-if value="{{card.hasSources}}" hint-placeholder-val="{{false}}">
+            <div style="display:flex;flex-wrap:wrap;gap:7px">
+              <sc-for list="{{card.sources}}" as="s" hint-placeholder-count="0">
+                <span style="display:inline-flex;align-items:center;gap:6px;border:1px solid var(--s-brd);border-radius:999px;padding:4px 8px 4px 5px;font:12.5px system-ui,sans-serif;color:var(--s-ink);background:var(--s-card)">
+                  <span style="width:16px;height:16px;border-radius:50%;background:var(--s-soft);color:var(--s-mut);font:600 9.5px system-ui,sans-serif;display:inline-flex;align-items:center;justify-content:center">{{s.initial}}</span>
+                  {{s.name}} <span style="color:var(--s-mut)">· {{s.date}}</span>
+                  <span style="{{s.wireStyle}}">wire</span>
+                  <span onClick="{{noop}}" style="font-weight:600;color:#12766B;cursor:pointer;margin-left:2px">Read</span>
+                </span>
+              </sc-for>
+            </div>
+            </sc-if>
+            <div style="display:flex;align-items:center;gap:10px;border-top:1px solid var(--s-brd);padding-top:10px;font:12.5px system-ui,sans-serif;color:var(--s-mut)">
+              <span>Helpful?</span>
+              <button onClick="{{thumbUp}}" style="border:none;background:transparent;cursor:pointer;font-size:13px">👍</button>
+              <button onClick="{{thumbDown}}" style="border:none;background:transparent;cursor:pointer;font-size:13px">👎</button>
+              <span style="flex:1"></span>
+              <button onClick="{{reportMistake}}" style="border:none;background:transparent;cursor:pointer;font:12.5px system-ui,sans-serif;color:var(--s-mut);text-decoration:underline">Report a mistake</button>
+              <button onClick="{{openInPanel}}" style="border:none;background:transparent;cursor:pointer;font:600 12.5px system-ui,sans-serif;color:#12766B">Full report →</button>
+            </div>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{gameIntro}}" hint-placeholder-val="{{false}}">
+          <div style="position:sticky;bottom:18px;display:flex;justify-content:center;pointer-events:none;z-index:20">
+            <div style="pointer-events:auto;display:flex;align-items:center;gap:14px;background:#1C2523;color:#fff;border-radius:12px;padding:12px 18px;font:14px system-ui,sans-serif;box-shadow:0 6px 24px rgba(0,0,0,.3);animation:cardIn .3s ease-out;max-width:560px">
+              Tap the sentences you think won’t hold up. Then we’ll show what we found.
+              <span style="background:rgba(255,255,255,.15);border-radius:6px;padding:3px 10px;font-weight:600;white-space:nowrap">{{markedCount}} marked</span>
+            </div>
+          </div>
+        </sc-if>
+      </div>
+
+      <sc-if value="{{scoreOpen}}" hint-placeholder-val="{{false}}">
+        <div style="position:absolute;inset:0;background:rgba(20,28,26,.35);display:flex;align-items:center;justify-content:center;z-index:55">
+          <div style="width:340px;background:var(--s-card);border-radius:12px;box-shadow:0 16px 48px rgba(20,30,28,.35);padding:22px;display:flex;flex-direction:column;gap:12px;animation:flipIn .35s ease-out">
+            <div style="font:700 19px Cabin,system-ui,sans-serif;color:var(--s-ink)">{{scoreLine}}</div>
+            <div style="font:13.5px system-ui,sans-serif;color:var(--s-mut)">Streak: 4 articles</div>
+            <div style="background:var(--s-soft);border-radius:8px;padding:10px 12px;font:13.5px/1.5 system-ui,sans-serif;color:var(--s-ink)">Tip: Big percentages without a named source are worth a second look.</div>
+            <button onClick="{{closeScore}}" style="border:none;background:var(--s-btn-bg);color:var(--s-btn-fg);border-radius:8px;padding:10px;font:600 14px system-ui,sans-serif;cursor:pointer">See what we found</button>
+          </div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{popupOpen}}" hint-placeholder-val="{{false}}">
+        <div style="position:absolute;top:8px;right:12px;width:400px;background:var(--s-card);border:1px solid var(--s-brd);border-radius:14px;box-shadow:0 12px 40px rgba(20,30,28,.24);z-index:50;animation:cardIn .2s ease-out;overflow:hidden">
+          <div style="display:flex;align-items:center;gap:8px;padding:14px 16px;border-bottom:1px solid var(--s-brd)">
+            <span style="display:flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:7px;background:var(--s-btn-bg);color:var(--s-btn-fg)"><svg width="14" height="14" viewBox="0 0 20 20" fill="none"><path d="M3 4h14L12.5 10v5.2L7.5 17v-7z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"></path></svg></span>
+            <span style="font:700 16px Cabin,sans-serif;color:var(--s-ink)">Sieve</span>
+            <span style="flex:1"></span>
+            <button onClick="{{togglePopup}}" style="border:none;background:transparent;color:var(--s-mut);cursor:pointer;font-size:14px">✕</button>
+          </div>
+          <sc-if value="{{stB}}" hint-placeholder-val="{{false}}">
+            <div style="padding:16px;display:flex;flex-direction:column;gap:14px">
+              <div style="background:var(--s-soft);border:1px solid var(--s-brd);border-radius:10px;padding:12px 14px;display:flex;flex-direction:column;gap:3px">
+                <div style="font:600 14.5px/1.4 'IBM Plex Sans';color:var(--s-ink)">Hawker stall rents to rise 40% next year, vendors say</div>
+                <div style="font:12.5px 'IBM Plex Sans';color:var(--s-mut)">Yahoo News · wire copy</div>
+              </div>
+              <button onClick="{{startCheck}}" style="border:none;background:var(--s-btn-bg);color:var(--s-btn-fg);border-radius:10px;padding:14px;font:600 16px 'IBM Plex Sans';cursor:pointer">Check this article</button>
+              <button onClick="{{startGuess}}" style="border:1.5px solid var(--s-brd);background:transparent;color:var(--s-ink);border-radius:10px;padding:11px;font:600 14px 'IBM Plex Sans';cursor:pointer">Guess first</button>
+              <div style="font:12.5px/1.5 'IBM Plex Sans';color:var(--s-mut)">Article text is sent to Sieve to check it. Nothing is stored with your identity.</div>
+            </div>
+          </sc-if>
+          <sc-if value="{{stC}}" hint-placeholder-val="{{false}}">
+            <div style="padding:16px;display:flex;flex-direction:column;gap:12px">
+              <div style="display:flex;flex-direction:column;gap:7px">
+                <sc-for list="{{steps}}" as="st" hint-placeholder-count="0">
+                  <div style="display:flex;align-items:center;gap:9px">
+                    <span style="{{st.dotStyle}}">{{st.mark}}</span>
+                    <span style="{{st.labelStyle}}">{{st.label}}</span>
+                  </div>
+                </sc-for>
+              </div>
+              <div style="display:flex;flex-direction:column;border-top:1px solid var(--s-brd)">
+                <sc-for list="{{rows}}" as="r" hint-placeholder-count="0">
+                  <div style="display:flex;align-items:center;gap:9px;padding:8px 2px;border-bottom:1px solid var(--s-brd);min-height:34px">
+                    <sc-if value="{{r.pending}}" hint-placeholder-val="{{false}}">
+                      <span style="width:15px;height:15px;border-radius:50%;border:1.5px solid var(--s-brd);flex:none;animation:pulse 1.4s ease-in-out infinite"></span>
+                      <span style="height:9px;border-radius:5px;background:var(--s-soft);flex:1;max-width:220px"></span>
+                    </sc-if>
+                    <sc-if value="{{r.isSup}}" hint-placeholder-val="{{false}}"><svg style="flex:none" width="15" height="15" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.5" stroke="#12766B" stroke-width="1.5"></circle><path d="M5.2 8.2l2 2 3.6-4" stroke="#12766B" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path></svg></sc-if>
+                    <sc-if value="{{r.isCon}}" hint-placeholder-val="{{false}}"><svg style="flex:none" width="15" height="15" viewBox="0 0 16 16" fill="none"><path d="M5.4 1.9h5.2l3.5 3.5v5.2l-3.5 3.5H5.4L1.9 10.6V5.4z" stroke="#C24A32" stroke-width="1.5" stroke-linejoin="round"></path><path d="M6 6l4 4M10 6l-4 4" stroke="#C24A32" stroke-width="1.5" stroke-linecap="round"></path></svg></sc-if>
+                    <sc-if value="{{r.isMis}}" hint-placeholder-val="{{false}}"><svg style="flex:none" width="15" height="15" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.5" stroke="#A16207" stroke-width="1.5"></circle><path d="M8 1.5a6.5 6.5 0 000 13z" fill="#A16207" opacity=".25"></path><path d="M8 7v3.4M8 5.2v.2" stroke="#A16207" stroke-width="1.6" stroke-linecap="round"></path></svg></sc-if>
+                    <sc-if value="{{r.isUnv}}" hint-placeholder-val="{{false}}"><svg style="flex:none" width="15" height="15" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.5" stroke="#64748B" stroke-width="1.5"></circle><path d="M6.4 6.2c0-1 .7-1.7 1.6-1.7s1.6.6 1.6 1.5c0 1.2-1.6 1.3-1.6 2.5" stroke="#64748B" stroke-width="1.4" stroke-linecap="round"></path><path d="M8 11v.2" stroke="#64748B" stroke-width="1.6" stroke-linecap="round"></path></svg></sc-if>
+                    <sc-if value="{{r.done}}" hint-placeholder-val="{{false}}">
+                      <span style="font:13px/1.35 'IBM Plex Sans';color:var(--s-ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">“{{r.snippet}}”</span>
+                    </sc-if>
+                  </div>
+                </sc-for>
+              </div>
+            </div>
+          </sc-if>
+          <sc-if value="{{stD}}" hint-placeholder-val="{{false}}">
+            <div style="padding:16px;display:flex;flex-direction:column;gap:14px">
+              <div style="font:600 14px/1.5 'IBM Plex Sans';color:var(--s-ink)">6 claims · <span style="color:var(--v-sup)">2 supported</span> · <span style="color:var(--v-con)">2 contradicted</span> · <span style="color:var(--v-mis)">1 missing context</span> · <span style="color:var(--v-unv)">1 unverifiable</span></div>
+              <div style="display:flex;gap:10px">
+                <button onClick="{{toggleHl}}" style="flex:1;border:1.5px solid var(--s-brd);background:transparent;color:var(--s-ink);border-radius:10px;padding:11px;font:600 13.5px 'IBM Plex Sans';cursor:pointer">{{showOnPageLabel}}</button>
+                <button onClick="{{fullReport}}" style="flex:1;border:none;background:var(--s-btn-bg);color:var(--s-btn-fg);border-radius:10px;padding:11px;font:600 13.5px 'IBM Plex Sans';cursor:pointer">Open full report</button>
+              </div>
+              <div style="font:12.5px 'IBM Plex Sans';color:var(--s-mut)">Checked 2 min ago · 340 readers have checked this article</div>
+            </div>
+          </sc-if>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{panelOpen}}" hint-placeholder-val="{{false}}">
+        <div style="position:absolute;top:0;right:0;bottom:0;width:360px;background:var(--s-surface);border-left:1px solid var(--s-brd);box-shadow:-10px 0 30px rgba(20,30,28,.16);z-index:52;display:flex;flex-direction:column;animation:panelIn .25s ease-out">
+          <div style="padding:16px 18px 12px;border-bottom:1px solid var(--s-brd);display:flex;flex-direction:column;gap:6px">
+            <div style="display:flex;align-items:center;gap:8px">
+              <span style="font:700 15px Cabin,sans-serif;color:var(--s-ink)">Full report</span>
+              <span style="flex:1"></span>
+              <button onClick="{{closePanel}}" style="border:none;background:transparent;color:var(--s-mut);cursor:pointer;font-size:14px">✕</button>
+            </div>
+            <div style="font:600 13.5px/1.4 'IBM Plex Sans';color:var(--s-ink)">Hawker stall rents to rise 40% next year, vendors say</div>
+            <div style="font:12px 'IBM Plex Sans';color:var(--s-mut)">Yahoo News · checked 2 min ago</div>
+            <div style="font:12.5px 'IBM Plex Sans';color:var(--s-mut)">6 claims · 2 supported · 2 contradicted · 1 missing context · 1 unverifiable</div>
+          </div>
+          <div style="display:flex;gap:6px;padding:10px 18px;flex-wrap:wrap;border-bottom:1px solid var(--s-brd)">
+            <sc-for list="{{filters}}" as="f" hint-placeholder-count="0">
+              <button onClick="{{f.onClick}}" style="{{f.style}}">{{f.label}}</button>
+            </sc-for>
+          </div>
+          <div style="flex:1;overflow:auto">
+            <sc-for list="{{panelRows}}" as="pr" hint-placeholder-count="0">
+              <div style="border-bottom:1px solid var(--s-brd)">
+                <div onClick="{{pr.onClick}}" style="display:flex;align-items:flex-start;gap:9px;padding:12px 18px;cursor:pointer">
+                  <sc-if value="{{pr.isSup}}" hint-placeholder-val="{{false}}"><svg style="flex:none;margin-top:2px" width="15" height="15" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.5" stroke="#12766B" stroke-width="1.5"></circle><path d="M5.2 8.2l2 2 3.6-4" stroke="#12766B" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path></svg></sc-if>
+                  <sc-if value="{{pr.isCon}}" hint-placeholder-val="{{false}}"><svg style="flex:none;margin-top:2px" width="15" height="15" viewBox="0 0 16 16" fill="none"><path d="M5.4 1.9h5.2l3.5 3.5v5.2l-3.5 3.5H5.4L1.9 10.6V5.4z" stroke="#C24A32" stroke-width="1.5" stroke-linejoin="round"></path><path d="M6 6l4 4M10 6l-4 4" stroke="#C24A32" stroke-width="1.5" stroke-linecap="round"></path></svg></sc-if>
+                  <sc-if value="{{pr.isMis}}" hint-placeholder-val="{{false}}"><svg style="flex:none;margin-top:2px" width="15" height="15" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.5" stroke="#A16207" stroke-width="1.5"></circle><path d="M8 1.5a6.5 6.5 0 000 13z" fill="#A16207" opacity=".25"></path><path d="M8 7v3.4M8 5.2v.2" stroke="#A16207" stroke-width="1.6" stroke-linecap="round"></path></svg></sc-if>
+                  <sc-if value="{{pr.isUnv}}" hint-placeholder-val="{{false}}"><svg style="flex:none;margin-top:2px" width="15" height="15" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.5" stroke="#64748B" stroke-width="1.5"></circle><path d="M6.4 6.2c0-1 .7-1.7 1.6-1.7s1.6.6 1.6 1.5c0 1.2-1.6 1.3-1.6 2.5" stroke="#64748B" stroke-width="1.4" stroke-linecap="round"></path><path d="M8 11v.2" stroke="#64748B" stroke-width="1.6" stroke-linecap="round"></path></svg></sc-if>
+                  <div style="display:flex;flex-direction:column;gap:3px;flex:1;min-width:0">
+                    <div style="font:500 13px/1.45 'IBM Plex Sans';color:var(--s-ink)">“{{pr.quote}}”</div>
+                    <div style="font:11.5px 'IBM Plex Sans';color:var(--s-mut)">{{pr.topSource}}</div>
+                  </div>
+                  <span style="color:var(--s-mut);font-size:11px;margin-top:3px">{{pr.chev}}</span>
+                </div>
+                <sc-if value="{{pr.expanded}}" hint-placeholder-val="{{false}}">
+                  <div style="padding:0 18px 14px 42px;display:flex;flex-direction:column;gap:10px">
+                    <div style="font:400 13px/1.55 'IBM Plex Sans';color:var(--s-ink)">{{pr.evidence}}</div>
+                    <sc-if value="{{pr.hasTrail}}" hint-placeholder-val="{{false}}">
+                    <div style="display:flex;flex-direction:column;background:var(--s-soft);border-radius:8px;padding:10px 12px">
+                      <sc-for list="{{pr.trail}}" as="tn" hint-placeholder-count="0">
+                        <div style="display:flex;flex-direction:column">
+                          <div style="{{tn.lineStyle}}"></div>
+                          <div style="display:flex;align-items:baseline;gap:8px">
+                            <span style="width:6px;height:6px;border-radius:50%;background:var(--s-ink);flex:none"></span>
+                            <span style="font:600 12px 'IBM Plex Sans';color:var(--s-ink);white-space:nowrap">{{tn.title}}</span>
+                            <span style="font:11.5px 'IBM Plex Sans';color:var(--s-mut)">{{tn.note}}</span>
+                          </div>
+                        </div>
+                      </sc-for>
+                    </div>
+                    </sc-if>
+                    <sc-if value="{{pr.hasSources}}" hint-placeholder-val="{{false}}">
+                    <div style="display:flex;flex-wrap:wrap;gap:6px">
+                      <sc-for list="{{pr.sources}}" as="ps" hint-placeholder-count="0">
+                        <span style="display:inline-flex;align-items:center;gap:5px;border:1px solid var(--s-brd);border-radius:999px;padding:3px 8px 3px 4px;font:11.5px 'IBM Plex Sans';color:var(--s-ink);background:var(--s-card)">
+                          <span style="width:14px;height:14px;border-radius:50%;background:var(--s-soft);color:var(--s-mut);font:600 8.5px 'IBM Plex Sans';display:inline-flex;align-items:center;justify-content:center">{{ps.initial}}</span>
+                          {{ps.name}} <span style="color:var(--s-mut)">· {{ps.date}}</span>
+                        </span>
+                      </sc-for>
+                    </div>
+                    </sc-if>
+                  </div>
+                </sc-if>
+              </div>
+            </sc-for>
+            <div style="padding:14px 18px;display:flex;flex-direction:column;gap:5px">
+              <div style="font:600 11px 'IBM Plex Sans';color:var(--s-mut);letter-spacing:.05em">ABOUT THIS SOURCE</div>
+              <div style="font:12.5px/1.55 'IBM Plex Sans';color:var(--s-ink)">Yahoo News · This article is wire copy republished on Yahoo. The original wire service is not named on the page.</div>
+            </div>
+          </div>
+          <div style="padding:12px 18px;border-top:1px solid var(--s-brd);display:flex;gap:16px;font:12.5px 'IBM Plex Sans'">
+            <span onClick="{{noop}}" style="color:#12766B;font-weight:600;cursor:pointer">How Sieve checks claims</span>
+            <span onClick="{{reportMistake}}" style="color:var(--s-mut);cursor:pointer;text-decoration:underline">Report a mistake</span>
+          </div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{toastOpen}}" hint-placeholder-val="{{false}}">
+        <div style="position:absolute;bottom:16px;left:50%;transform:translateX(-50%);background:#1C2523;color:#fff;border-radius:8px;padding:9px 16px;font:13px system-ui,sans-serif;box-shadow:0 4px 16px rgba(0,0,0,.3);z-index:60;animation:cardIn .25s ease-out">{{toast}}</div>
+      </sc-if>
+    </div>
+  </div>
+  <div style="width:min(1100px,100%);font:12.5px/1.6 'IBM Plex Sans';color:#5B6663">Click the Sieve icon in the toolbar to start. <strong>Check this article</strong> streams verdicts onto the page — click any highlight for its claim card, then <strong>Full report →</strong> for the side panel. <strong>Guess first</strong> runs game mode. Highlights never reflow the article text.</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+class Component extends DCLogic {
+  state = { theme:'light', popupOpen:true, mode:'idle', step:0, resolved:[], reveal:false, marked:[], hlVisible:true, openId:-1, cardTop:0, cardLeft:0, barClosed:false, collapsed:false, pinned:false, toast:'', scoreOpen:false, panelOpen:false, filter:'all', expandedId:-1, ringPct:0 };
+  scrollRef = React.createRef();
+  timers = [];
+  DATA = [
+    {v:'con', conf:3, quote:'rise by 40% from 1 January', evidence:'An official release and CNA put the median adjustment at 4%, not 40%.',
+      trail:[{t:'This article', n:'wire copy, republished on Yahoo'},{t:'Independent reports', n:'CNA · Reuters'},{t:'Original source', n:'gov.sg press release, 12 Mar'}],
+      sources:[{name:'gov.sg release', date:'12 Mar'},{name:'CNA', date:'12 Mar'},{name:'Reuters', date:'13 Mar', wire:true}]},
+    {v:'unv', conf:0, quote:'More than 200 stalls have already closed this year', evidence:'No independent reporting or official figure found for stall closures this year.', trail:[{t:'This article', n:'wire copy, republished on Yahoo'},{t:'Independent reports', n:'none found'}], sources:[]},
+    {v:'sup', conf:3, quote:'The last islandwide rent adjustment took effect in 2024', evidence:'Straits Times and official data confirm the 2024 adjustment.',
+      trail:[{t:'This article', n:'wire copy, republished on Yahoo'},{t:'Independent reports', n:'Straits Times'},{t:'Original source', n:'data.gov.sg'}],
+      sources:[{name:'Straits Times', date:'Feb 2024'},{name:'data.gov.sg', date:'2024'}]},
+    {v:'mis', conf:2, quote:'eight in ten hawkers are considering leaving', evidence:'The survey exists, but had 42 self-selected respondents.',
+      trail:[{t:'This article', n:'wire copy, republished on Yahoo'},{t:'Independent reports', n:'Mothership'},{t:'Original source', n:'survey PDF, 42 respondents'}],
+      sources:[{name:'Mothership', date:'Jun'},{name:'Survey PDF', date:'Jun'}]},
+    {v:'con', conf:2, quote:'will not be capped under any circumstances', evidence:'The quoted line doesn\u2019t appear in the transcript; the spokesperson said caps would be \u201creviewed\u201d.',
+      trail:[{t:'This article', n:'wire copy, republished on Yahoo'},{t:'Original source', n:'official transcript, 10 Mar'}],
+      sources:[{name:'Official transcript', date:'10 Mar'}]},
+    {v:'sup', conf:3, quote:'The review takes effect on 1 January', evidence:'Matches the official release.',
+      trail:[{t:'This article', n:'wire copy, republished on Yahoo'},{t:'Original source', n:'gov.sg press release, 12 Mar'}],
+      sources:[{name:'gov.sg release', date:'12 Mar'}]}
+  ];
+  VMETA = { sup:{label:'Supported', u:'#12766B', tint:'rgba(18,118,107,.10)', w:'1.5px'}, con:{label:'Contradicted', u:'#C24A32', tint:'rgba(194,74,50,.13)', w:'2px'}, mis:{label:'Missing context', u:'#A16207', tint:'rgba(161,98,7,.12)', w:'1.5px'}, unv:{label:'Unverifiable', u:'#64748B', tint:'rgba(100,116,139,.10)', w:'1.5px'} };
+  THEMES = {
+    light:{surface:'#F7F9F8', card:'#FFFFFF', ink:'#1C2523', mut:'#5B6663', brd:'#E2E8E5', soft:'#F0F4F2', btnBg:'#1C2523', btnFg:'#FFFFFF', vsup:'#0D5A51', vcon:'#A03A26', vmis:'#7C4D08', vunv:'#475569', pillSup:'#E3F1EE', pillCon:'#FAE9E4', pillMis:'#FAF1DC', pillUnv:'#ECEFF3'},
+    dark:{surface:'#232B29', card:'#2A3330', ink:'#EDF2F0', mut:'#9BA8A3', brd:'#3A4441', soft:'#1E2624', btnBg:'#EDF2F0', btnFg:'#1C2523', vsup:'#8AD4C7', vcon:'#F2A490', vmis:'#E7BE66', vunv:'#AEBBCB', pillSup:'#16443D', pillCon:'#4A241C', pillMis:'#423414', pillUnv:'#333B47'}
+  };
+  componentWillUnmount(){ this.timers.forEach(clearTimeout); }
+  later(fn, ms){ this.timers.push(setTimeout(fn, ms)); }
+  showToast(msg){ this.setState({toast:msg}); this.later(()=>this.setState({toast:''}), 2200); }
+  startCheck = () => {
+    this.setState({mode:'checking', step:0, resolved:[], reveal:false, barClosed:false});
+    this.later(()=>this.setState({step:1}), 700);
+    this.later(()=>this.setState({step:2}), 1400);
+    const order=[2,0,5,3,1,4];
+    order.forEach((idx,i)=>this.later(()=>{
+      this.setState(s=>({resolved:[...s.resolved, idx]}));
+      if(i===order.length-1) this.later(()=>{this.setState({mode:'done'}); this.animateScore();}, 500);
+    }, 2100+i*850));
+  };
+  startGuess = () => this.setState({mode:'guess', marked:[], popupOpen:false, barClosed:false, resolved:[], reveal:false});
+  reveal = () => this.setState({mode:'reveal', reveal:true, resolved:[0,1,2,3,4,5], scoreOpen:true});
+  closeScore = () => { this.setState({scoreOpen:false, mode:'done'}); this.animateScore(); };
+  openCard(i, e){
+    try{
+      if(e){ e.preventDefault(); e.stopPropagation(); }
+      const cont=this.scrollRef.current; if(!cont) return;
+      const el=(e&&e.currentTarget)||(e&&e.target); if(!el||!el.getBoundingClientRect) return;
+      const r=el.getBoundingClientRect(), cr=cont.getBoundingClientRect();
+      const contW=cont.clientWidth;
+      let left=r.left-cr.left; if(left+372>contW) left=Math.max(12, contW-372);
+      const top=r.bottom-cr.top+cont.scrollTop+10;
+      this.setState({openId:i, cardTop:top, cardLeft:left});
+    }catch(err){ /* never let a click crash the page */ }
+  }
+  animateScore(){
+    if(this._raf) cancelAnimationFrame(this._raf);
+    const target=50, dur=1400, t0=performance.now();
+    const step=(now)=>{
+      const p=Math.min(1,(now-t0)/dur), ease=1-Math.pow(1-p,3);
+      this.setState({ringPct:Math.round(target*ease)});
+      if(p<1) this._raf=requestAnimationFrame(step);
+    };
+    this._raf=requestAnimationFrame(step);
+  }
+  onScroll = (e) => {
+    const t=e.target.scrollTop;
+    this.setState(s=>({collapsed: t>80 && !s.pinned, pinned: t>80 ? s.pinned : false, openId:-1}));
+  };
+  filterDefs = [['all','All'],['sup','Supported'],['con','Contradicted'],['mis','Missing context'],['unv','Unverifiable']];
+  renderVals(){
+    const S=this.state, T=this.THEMES[S.theme], D=this.DATA, VM=this.VMETA;
+    const vars=`--s-surface:${T.surface};--s-card:${T.card};--s-ink:${T.ink};--s-mut:${T.mut};--s-brd:${T.brd};--s-soft:${T.soft};--s-btn-bg:${T.btnBg};--s-btn-fg:${T.btnFg};--v-sup:${T.vsup};--v-con:${T.vcon};--v-mis:${T.vmis};--v-unv:${T.vunv}`;
+    const themeBtn=(on)=>`border:1px solid #C9D1CE;border-radius:6px;padding:4px 12px;font:500 12px 'IBM Plex Sans';cursor:pointer;${on?'background:#1C2523;color:#fff;border-color:#1C2523':'background:#fff;color:#3d4744'}`;
+    const checking=S.mode==='checking', done=S.mode==='done'||S.mode==='reveal', guess=S.mode==='guess';
+    const showHl=(checking||done)&&S.hlVisible;
+    const claims={};
+    D.forEach((d,i)=>{
+      const m=VM[d.v], res=S.resolved.includes(i);
+      let style='', onClick=this.noop;
+      if(guess){
+        const marked=S.marked.includes(i);
+        style=`cursor:pointer;border-radius:3px;outline:2px dotted ${marked?'#1C2523':'#9BA8A3'};outline-offset:2px;${marked?'background:rgba(28,37,35,.08);':''}`;
+        onClick=()=>this.setState(s=>({marked: s.marked.includes(i)? s.marked.filter(x=>x!==i) : [...s.marked,i]}));
+      } else if(showHl&&res){
+        style=`cursor:pointer;background:${m.tint};box-shadow:inset 0 -${m.w} 0 ${m.u};border-radius:2px;animation:${S.reveal?'flipIn .4s ease-out':'hlSettle .5s ease-out'};`;
+        onClick=(e)=>this.openCard(i,e);
+      }
+      claims['c'+(i+1)]={style, onClick};
+    });
+    const counts='2 supported · 2 contradicted · 1 missing context · 1 unverifiable';
+    const stepDefs=['Reading article','Found 6 claims',`Checking ${Math.min(S.resolved.length+1,6)} of 6`];
+    const steps=stepDefs.map((label,i)=>{
+      const dState=S.step>i?'done':(S.step===i?'active':'pending');
+      return {label, mark:dState==='done'?'✓':'', 
+        dotStyle:`width:16px;height:16px;border-radius:50%;flex:none;display:flex;align-items:center;justify-content:center;font:600 10px system-ui;${dState==='done'?`background:${T.btnBg};color:${T.btnFg}`:dState==='active'?`border:2px solid ${T.ink};animation:pulse 1.2s infinite`:`border:1.5px solid ${T.brd}`}`,
+        labelStyle:`font:${dState==='pending'?'400':'600'} 13px 'IBM Plex Sans';color:${dState==='pending'?T.mut:T.ink}`};
+    });
+    const rows=D.map((d,i)=>{
+      const res=S.resolved.includes(i);
+      return {pending:!res, done:res, isSup:res&&d.v==='sup', isCon:res&&d.v==='con', isMis:res&&d.v==='mis', isUnv:res&&d.v==='unv', snippet:d.quote};
+    });
+    const open=S.openId>=0?D[S.openId]:null;
+    const mkTrail=(trail,small)=>trail.map((n,j)=>({title:n.t, note:n.n, lineStyle:j===0?'height:0':`width:1.5px;height:${small?10:12}px;background:var(--s-brd);margin:2px 0 2px ${small?2:2.5}px`}));
+    const dot=(on,col)=>`width:7px;height:7px;border-radius:50%;${on?`background:${col}`:`border:1.5px solid ${T.brd}`}`;
+    let card=null;
+    if(open){
+      const m=VM[open.v], fg=T['v'+open.v], bg=T['pill'+open.v.charAt(0).toUpperCase()+open.v.slice(1)];
+      card={label:m.label, isSup:open.v==='sup', isCon:open.v==='con', isMis:open.v==='mis', isUnv:open.v==='unv',
+        pillStyle:`display:inline-flex;align-items:center;gap:6px;padding:4px 11px;border-radius:999px;background:${bg};color:${fg};font:600 13px system-ui,sans-serif`,
+        hasConf:open.conf>0, confWord:open.conf===3?'High confidence':open.conf===2?'Medium confidence':'Low confidence',
+        dot1:dot(open.conf>=1,fg), dot2:dot(open.conf>=2,fg), dot3:dot(open.conf>=3,fg),
+        quote:open.quote, evidence:open.evidence, hasTrail:open.trail.length>0, trail:mkTrail(open.trail),
+        hasSources:open.sources.length>0,
+        sources:open.sources.map(s=>({name:s.name, date:s.date, initial:s.name.charAt(0).toUpperCase(), wireStyle:s.wire?`font:600 10px system-ui;color:${T.mut};border:1px solid var(--s-brd);border-radius:4px;padding:0 4px`:'display:none'}))};
+    }
+    const shaky=[0,3,4], hits=S.marked.filter(i=>shaky.includes(i)).length;
+    const filters=this.filterDefs.map(([key,label])=>({label, onClick:()=>this.setState({filter:key}),
+      style:`white-space:nowrap;border:1px solid var(--s-brd);border-radius:999px;padding:4px 11px;font:${S.filter===key?'600':'400'} 12px 'IBM Plex Sans';cursor:pointer;${S.filter===key?`background:${T.btnBg};color:${T.btnFg};border-color:${T.btnBg}`:`background:transparent;color:${T.ink}`}`}));
+    const panelRows=D.map((d,i)=>({d,i})).filter(({d})=>S.filter==='all'||d.v===S.filter).map(({d,i})=>({
+      quote:d.quote, isSup:d.v==='sup', isCon:d.v==='con', isMis:d.v==='mis', isUnv:d.v==='unv',
+      topSource:d.sources.length?d.sources[0].name+' · '+d.sources[0].date:'No independent source found',
+      onClick:()=>this.setState(s=>({expandedId:s.expandedId===i?-1:i})),
+      expanded:S.expandedId===i, chev:S.expandedId===i?'▲':'▼',
+      evidence:d.evidence, hasTrail:d.trail.length>0, trail:mkTrail(d.trail,true), hasSources:d.sources.length>0,
+      sources:d.sources.map(s=>({name:s.name, date:s.date, initial:s.name.charAt(0).toUpperCase()}))
+    }));
+    return {
+      setLight:()=>this.setState({theme:'light'}), setDark:()=>this.setState({theme:'dark'}),
+      lightBtnStyle:themeBtn(S.theme==='light'), darkBtnStyle:themeBtn(S.theme==='dark'),
+      reset:()=>{this.timers.forEach(clearTimeout); this.timers=[]; this.setState({popupOpen:true, mode:'idle', step:0, resolved:[], reveal:false, marked:[], hlVisible:true, openId:-1, barClosed:false, collapsed:false, pinned:false, toast:'', scoreOpen:false, panelOpen:false, filter:'all', expandedId:-1, ringPct:0}); if(this._raf) cancelAnimationFrame(this._raf);},
+      togglePopup:()=>this.setState(s=>({popupOpen:!s.popupOpen, panelOpen:false})),
+      iconBtnStyle:`position:relative;width:34px;height:34px;border-radius:8px;border:none;display:flex;align-items:center;justify-content:center;cursor:pointer;${S.popupOpen?'background:#C7CFCC;color:#1C2523':'background:transparent;color:#4A5450'}`,
+      badgeVisible:done,
+      pageWrapStyle:`position:relative;${vars}`,
+      barVisible:(checking||done||guess)&&!S.barClosed, barExpanded:!S.collapsed, barCollapsed:S.collapsed,
+      barLabel:guess?'Guess mode':checking?'Checking…':'Checked',
+      barCounts:guess?`${S.marked.length} marked`:checking?`${S.resolved.length} of 6 claims`:'6 claims · 2 supported · 2 contradicted · 2 flagged',
+      pillLabel:guess?'Guessing':checking?'Checking…':'6 claims',
+      gameActive:guess, gameInactive:!guess&&done,
+      closeBar:()=>this.setState({barClosed:true}), expandBar:()=>this.setState({collapsed:false, pinned:true}),
+      onScroll:this.onScroll, scrollRef:this.scrollRef,
+      ...claims,
+      cardOpen:!!card, card:card||{},
+      cardStyle:`position:absolute;top:${S.cardTop}px;left:${S.cardLeft}px;width:360px;max-width:calc(100% - 24px);background:var(--s-card);border:1px solid var(--s-brd);border-radius:12px;box-shadow:0 12px 40px rgba(20,30,28,.22);padding:14px 16px;display:flex;flex-direction:column;gap:12px;z-index:45;animation:cardIn .2s ease-out`,
+      closeCard:()=>this.setState({openId:-1}),
+      openInPanel:()=>this.setState(s=>({panelOpen:true, popupOpen:false, expandedId:s.openId, openId:-1, filter:'all'})),
+      gameIntro:guess, markedCount:S.marked.length,
+      reveal:this.reveal, scoreOpen:S.scoreOpen, scoreLine:`You spotted ${hits} of 3 shaky claims`, closeScore:this.closeScore,
+      popupOpen:S.popupOpen&&!S.panelOpen, stB:S.mode==='idle'||guess, stC:checking, stD:done,
+      steps, rows,
+      startCheck:this.startCheck, startGuess:this.startGuess,
+      toggleHl:()=>this.setState(s=>({hlVisible:!s.hlVisible})),
+      showOnPageLabel:S.hlVisible?'Hide on page':'Show on page',
+      fullReport:()=>this.setState({panelOpen:true, popupOpen:false, openId:-1}),
+      panelOpen:S.panelOpen, closePanel:()=>this.setState({panelOpen:false}),
+      filters, panelRows,
+      thumbUp:()=>this.showToast('Thanks for the feedback'), thumbDown:()=>this.showToast('Thanks for the feedback'),
+      reportMistake:()=>this.showToast('Thanks — we\u2019ll take a look'),
+      toastOpen:!!S.toast, toast:S.toast,
+      siteScoreOpen:done&&!S.scoreOpen,
+      ringPct:S.ringPct,
+      ringOffset:163.4*(1-S.ringPct/100),
+      ringColor:S.ringPct<40?'#C24A32':S.ringPct<70?'#A16207':'#12766B',
+      ringTier:S.ringPct<40?'Largely contradicted':S.ringPct<70?'Mixed — read with care':'Mostly supported',
+      noop:()=>{}
+    };
+  }
+}
+</script>
+</body>
+</html>
