@@ -136,7 +136,7 @@ body {
 }
 
 /* -------------------------------------------------------------------------- */
-/* Ready state                                                                 */
+/* Article card — ready, checking and done all name the article on screen      */
 /* -------------------------------------------------------------------------- */
 
 .rv-article {
@@ -147,6 +147,14 @@ body {
   background: var(--s-soft);
   border: 1px solid var(--s-brd);
   border-radius: 10px;
+}
+
+/* Overline on the done state's card. A finished result outlives the tab it was
+   taken from, so the card has to say which article the counts below belong to.
+   Sentence case, like every other Re-Vera label. */
+.rv-article-caption {
+  font: 600 11.5px/1.3 var(--s-font-body);
+  color: var(--s-mut);
 }
 
 .rv-article-title {

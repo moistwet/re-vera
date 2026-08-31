@@ -115,7 +115,11 @@ chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) =
     // `ready` is the one place the persisted state is adopted; everything else
     // reads the live variable, so answering here can never roll the popup back
     // to a snapshot that a claim event has already moved past.
-    void ready.then(() => sendResponse(stateMessage(jobState)))
+    // `dropStaleResult` runs before the reply so the popup never paints one
+    // article's result over another article — see its own comment.
+    void ready
+      .then(dropStaleResult)
+      .then(() => sendResponse(stateMessage(jobState)))
     return true // keep the channel open for the async reply
   }
 
@@ -191,9 +195,19 @@ function startCheck(): JobState {
   void setState(jobState)
 
   const run = runCheck()
-  activeRun = run.finally(() => {
-    activeRun = null
-    streamAbort = null
+  activeRun = run
+  // `runCheck` resolves rather than rejects, but a bug in its own error path
+  // must not become an unhandled rejection in a service worker.
+  void run.catch(() => undefined).finally(() => {
+    // Only the run that is still current may clear the slot. Whatever went
+    // wrong — a thrown error, an aborted fetch, a watchdog firing — the slot
+    // MUST end up null, because a non-null `activeRun` makes every later
+    // START_CHECK a no-op and leaves the reader looking at a popup with no
+    // button in it.
+    if (activeRun === run) {
+      activeRun = null
+      streamAbort = null
+    }
   })
   return jobState
 }
@@ -216,6 +230,10 @@ async function runCheck(): Promise<void> {
     update({ status: 'checking', cached: job.cached, claimCount: job.claim_count })
 
     streamAbort = new AbortController()
+    // `openStream` is guaranteed to settle: it carries its own idle and total
+    // watchdogs, so a backend that keep-alives forever without ever sending
+    // `done` ends up here as an error the reader can retry, not as a promise
+    // that never resolves.
     await openStream(job.job_id, applyEvent, streamAbort.signal)
 
     // The backend closes the stream after `done` or `error`. Reaching here in
@@ -226,6 +244,10 @@ async function runCheck(): Promise<void> {
   } catch (error) {
     const { code, message } = describeError(error)
     fail(code, message)
+  } finally {
+    // Belt and braces with startCheck's own cleanup: nothing after this point
+    // may leave a dead run holding the lock.
+    streamAbort?.abort()
   }
 }
 
@@ -245,8 +267,20 @@ function applyEvent(message: SSEMessage): void {
   switch (message.event) {
     case 'claims_found': {
       const payload = parseJson<ClaimsFoundEvent>(message.data)
-      if (typeof payload?.count !== 'number') return
-      update({ status: 'checking', claimCount: payload.count })
+      if (payload === null) return
+      // `count` and `claim_ids.length` are the same number by contract
+      // (docs/decisions.md §15). When both are present the list wins: it is the
+      // thing the rows are actually keyed by, so a disagreement must not leave
+      // the popup allocating a different number of rows than it can ever fill.
+      const ids = Array.isArray(payload.claim_ids)
+        ? payload.claim_ids.filter((id): id is string => typeof id === 'string')
+        : null
+      const count = ids !== null ? ids.length : payload.count
+      if (typeof count !== 'number' || !Number.isFinite(count)) return
+      // The list is carried on, not just counted: it is the article order the
+      // popup allocates and fills its rows by. Dropping it here is what left
+      // the live path and the cache replay rendering one article two ways.
+      update({ status: 'checking', claimCount: count, claimIds: ids })
       return
     }
 
@@ -298,6 +332,88 @@ function describeError(error: unknown): { code: string; message: string } {
 /* -------------------------------------------------------------------------- */
 /* Tab + extraction                                                            */
 /* -------------------------------------------------------------------------- */
+
+/**
+ * Forget a finished result that belongs to a different article.
+ *
+ * `JobState` outlives the popup (it is persisted in `chrome.storage.session`),
+ * which is what makes closing and reopening the popup mid-check work — but the
+ * same persistence meant that opening the popup on a *second* article showed
+ * the *first* article's verdicts, with no hint that they were about something
+ * else. Nothing else ever returned the state to `idle`.
+ *
+ * So: when the popup asks for state, if the tab it is opening over is not the
+ * article the stored result describes, throw the result away and give it the
+ * ready state for what the reader is actually looking at.
+ *
+ * Three guards keep this from eating something it should not:
+ *
+ *  - a run owned by this worker is never touched, so a check the reader started
+ *    survives them switching tabs while it runs;
+ *  - `idle` has nothing to drop;
+ *  - a tab URL we cannot read (no `activeTab` grant, a closed window) leaves
+ *    the state alone. Guessing would be worse than being stale.
+ *
+ * This hangs off `GET_STATE` — a message the popup only sends because the
+ * reader opened it — rather than off `chrome.tabs.onActivated`/`onUpdated`.
+ * Both would work, but tab listeners wake the service worker on every
+ * navigation in every tab, and CLAUDE.md rule 5 is that nothing in Re-Vera runs
+ * except on the reader's own gesture. Opening the popup is that gesture, and it
+ * is also the only moment the answer is ever read.
+ */
+async function dropStaleResult(): Promise<void> {
+  if (activeRun) return
+  if (jobState.status === 'idle') return
+  // Nothing to compare against: the run failed before it ever identified an
+  // article (a blocked scheme, a page that refused injection). Leaving the
+  // error up is the honest option — the popup's Try again re-runs against
+  // whatever tab is in front of the reader now.
+  if (jobState.url === null) return
+
+  const current = await activeTabUrl()
+  if (current === null) return
+  if (sameArticle(jobState.url, current)) return
+
+  lastSeq = 0
+  checkedTabId = null
+  void clearBadge()
+  jobState = INITIAL_JOB_STATE
+  broadcast(jobState)
+  void setState(jobState)
+}
+
+/** URL of the tab the popup is sitting over, or null when it cannot be read. */
+async function activeTabUrl(): Promise<string | null> {
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true })
+    return tab?.url ?? null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Whether two URLs name the same article.
+ *
+ * The fragment is ignored: the reader jumping to `#comments` is still the same
+ * page, and the stored URL comes from the content script's `document.URL` while
+ * the compared one comes from `chrome.tabs`, which need not agree on it.
+ * Anything unparseable falls back to an exact string comparison.
+ */
+function sameArticle(a: string, b: string): boolean {
+  if (a === b) return true
+  try {
+    const left = new URL(a)
+    const right = new URL(b)
+    return (
+      left.origin === right.origin &&
+      left.pathname === right.pathname &&
+      left.search === right.search
+    )
+  } catch {
+    return false
+  }
+}
 
 async function activeTabId(): Promise<number> {
   // `lastFocusedWindow` rather than `currentWindow`: a service worker has no

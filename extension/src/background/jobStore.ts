@@ -82,5 +82,9 @@ function reviveState(value: unknown): JobState {
     ...INITIAL_JOB_STATE,
     ...candidate,
     claims: Array.isArray(candidate.claims) ? candidate.claims : [],
+    // Same reasoning as `claims`, plus one more: a state written before
+    // decision 15 has no `claimIds` at all, and the popup keys its rows off
+    // this list — a non-array here would make it allocate rows from garbage.
+    claimIds: Array.isArray(candidate.claimIds) ? candidate.claimIds : null,
   }
 }

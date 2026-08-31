@@ -11,6 +11,14 @@
  * encoding a verdict by colour alone, so icon *and* name ship together. The
  * icon already carries the name as its `aria-label`, so the visible copy is
  * `aria-hidden` and a screen reader hears it once.
+ *
+ * `index` is the claim's position in the *article*, not in the order it
+ * resolved. docs/design-handoff.md § Interactions assumes exactly that when it
+ * specifies the screen-reader label "Claim 3 of 6, contradicted": row 3 is the
+ * third claim in the text the reader is looking at, whichever claim the backend
+ * happened to finish third. The caller allocates rows from the article-ordered
+ * ids in `claims_found`, so the number here is stable from the moment the row
+ * appears as a skeleton to the moment its verdict lands.
  */
 
 import type { ReactElement } from 'react'
@@ -19,7 +27,7 @@ import type { Claim } from '../types/schema'
 import { VERDICT_LABELS, VerdictIcon, verdictClass } from './verdictIcons'
 
 export interface ClaimRowProps {
-  /** 1-based position in the list, for the screen-reader "Claim 3 of 6". */
+  /** 1-based position in the article, for the screen-reader "Claim 3 of 6". */
   index: number
   /** How many claims this check covers. */
   total: number

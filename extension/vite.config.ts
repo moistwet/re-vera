@@ -28,8 +28,10 @@ export default defineConfig(({ mode }) => {
     },
 
     test: {
+      // Node by default — the background and SSE tests need no DOM. The popup
+      // test opts itself into jsdom with an `@vitest-environment` docblock.
       environment: 'node',
-      include: ['tests/**/*.test.ts'],
+      include: ['tests/**/*.test.{ts,tsx}'],
     },
   }
 })

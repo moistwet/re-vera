@@ -18,6 +18,18 @@ export interface JobState {
   title: string | null
   /** How many claims the backend said it would check; null until `claims_found`. */
   claimCount: number | null
+  /**
+   * Every claim id this job will send, in article order (ascending by the
+   * claim's `start` offset); null until `claims_found`, and null for a job
+   * whose backend still sends the pre-decision-15 `{type, count}` payload.
+   *
+   * This is what the popup keys its rows by (docs/decisions.md §15): claims
+   * resolve out of article order on a live run and in article order on a cache
+   * replay, so filling rows by arrival rendered one article two different ways.
+   * With the ids up front, every row exists before any claim lands and each row
+   * is written exactly once, identically on both paths.
+   */
+  claimIds: string[] | null
   /** Resolved claims so far, in arrival order. */
   claims: Claim[]
   /** Per-verdict tally; null until the `done` event. */
@@ -32,6 +44,7 @@ export const INITIAL_JOB_STATE: JobState = {
   url: null,
   title: null,
   claimCount: null,
+  claimIds: null,
   claims: [],
   counts: null,
   cached: false,

@@ -15,8 +15,19 @@ import type { ReactElement } from 'react'
 
 import type { JobStatus } from '../shared/messages'
 
+/**
+ * The only two statuses that draw a stepper.
+ *
+ * A stepper describes a check in flight, so `done`, `error` and `idle` never
+ * reach it — the done state shows the summary and the counts instead. Saying so
+ * in the type is what keeps `currentStep` free of a branch for a status that
+ * cannot arrive (an earlier cut had a `status === 'done'` case here that no
+ * render could ever execute).
+ */
+export type StepperStatus = Extract<JobStatus, 'extracting' | 'checking'>
+
 export interface StepperProps {
-  status: JobStatus
+  status: StepperStatus
   /** How many claims the backend said it would check; null until `claims_found`. */
   claimCount: number | null
   /** How many claim events have arrived so far. */
@@ -26,16 +37,16 @@ export interface StepperProps {
 type StepState = 'done' | 'active' | 'pending'
 
 /**
- * Index of the step in progress; 3 once every step is behind us.
+ * Index of the step in progress.
  *
  * `extracting` is the article being read. `checking` with no claim count yet
  * means the request is in but the backend has not said how many claims it
  * found. A claim count is the signal that the last step has started — on a
  * cache hit it arrives with the POST response, so the stepper jumps straight
- * there and the reader never sees a stall.
+ * there and the reader never sees a stall. The last step stays active until the
+ * job leaves this component entirely, which is exactly when it is finished.
  */
-function currentStep(status: JobStatus, claimCount: number | null): number {
-  if (status === 'done') return 3
+function currentStep(status: StepperStatus, claimCount: number | null): number {
   if (status === 'checking') return claimCount === null ? 1 : 2
   return 0
 }

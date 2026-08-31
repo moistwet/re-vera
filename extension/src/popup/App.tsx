@@ -15,6 +15,18 @@
  * milestone 4) and **Open full report** (side panel, milestone 4) are rendered
  * disabled and say so. The cut features — reader counter, thumbs feedback,
  * "Report a mistake", the score banner — are not here at all.
+ *
+ * Two things the first cut got wrong, and how they are handled now:
+ *
+ *  - **A finished check is not a dead end.** `JobState` outlives the popup and
+ *    the worker (it lives in `chrome.storage.session`), so a `done` state with
+ *    no way out left the reader staring at the previous article's counts with
+ *    no button. The done state now carries its own primary control, and both
+ *    the checking and the done state name the article the result belongs to.
+ *  - **Rows are article-ordered, not arrival-ordered.** Claims resolve out of
+ *    order on a live run and in order on a cache replay; `claims_found` now
+ *    lists every claim id in article order up front, so every row exists (as a
+ *    skeleton) before any claim lands and each row is written exactly once.
  */
 
 import { useCallback, useEffect, useRef, useState, type ReactElement } from 'react'
@@ -34,6 +46,7 @@ import { FunnelMark } from './verdictIcons'
 
 const COPY = {
   check: 'Check this article',
+  checkAgain: 'Check again',
   guess: 'Guess first',
   guessSoon: 'Guess first arrives in a later Re-Vera update.',
   report: 'Open full report',
@@ -42,6 +55,7 @@ const COPY = {
     'Article text is sent to Re-Vera to check it. Nothing is stored with your identity.',
   tryAgain: 'Try again',
   untitled: 'This page',
+  checkedArticle: 'Checked article',
   cached: 'Re-Vera checked this article recently and reused that result.',
   limitTitle: 'Daily limit reached',
   errorTitle: 'The check did not finish',
@@ -57,7 +71,7 @@ interface PageInfo {
 }
 
 export default function App(): ReactElement {
-  const state = useJobState()
+  const view = useJobState()
 
   return (
     <div className="rv-app rv-theme-light">
@@ -67,7 +81,7 @@ export default function App(): ReactElement {
         </span>
         <span className="rv-wordmark">Re-Vera</span>
       </header>
-      <main>{renderState(state)}</main>
+      <main>{renderState(view)}</main>
     </div>
   )
 }
@@ -78,7 +92,9 @@ function renderState(view: JobStateView): ReactElement {
     case 'checking':
       return <CheckingState state={view.state} />
     case 'done':
-      return <DoneState state={view.state} />
+      // The done state gets the same handler as the error state: a finished
+      // check must never be a state the reader cannot leave.
+      return <DoneState state={view.state} onCheck={view.startCheck} />
     case 'error':
       return <ErrorState state={view.state} onRetry={view.startCheck} />
     default:
@@ -99,32 +115,43 @@ interface JobStateView {
  * Subscribe to the service worker's job state.
  *
  * `GET_STATE` seeds the view; every later change arrives as a pushed `STATE`.
- * A push that lands before the seeded reply wins — the reply was queued
- * earlier, so applying it afterwards would rewind the popup by one event.
+ *
+ * Both replies — to `GET_STATE` and to `START_CHECK` — describe the job as it
+ * was when the message was sent, and a `STATE` push can easily overtake them
+ * (the worker broadcasts on every SSE event while a reply is still crossing the
+ * message channel). Applying a reply that has been overtaken rewinds the popup:
+ * rows that had already resolved go back to skeletons. So every state the popup
+ * renders bumps `version`, each request remembers the version it was sent at,
+ * and a reply is dropped unless that version is still the one on screen.
  */
 function useJobState(): JobStateView {
   const [state, setState] = useState<JobState>(INITIAL_JOB_STATE)
-  const pushed = useRef(false)
+  /** How many states have been rendered. Monotonic; only ever compared, never shown. */
+  const version = useRef(0)
 
   useEffect(() => {
     let live = true
 
     const onMessage = (message: unknown): void => {
       if (!live || !isStateMessage(message)) return
-      pushed.current = true
+      version.current += 1
       setState(message.state)
     }
     chrome.runtime.onMessage.addListener(onMessage)
 
+    const at = version.current
     const request: GetStateMessage = { type: 'GET_STATE' }
     void chrome.runtime
       .sendMessage(request)
       .then((response: unknown) => {
-        if (!live || pushed.current || !isStateMessage(response)) return
+        if (!live || version.current !== at || !isStateMessage(response)) return
+        version.current += 1
         setState(response.state)
       })
       .catch(() => {
-        if (live) setState(unreachable)
+        if (!live || version.current !== at) return
+        version.current += 1
+        setState(unreachable)
       })
 
     return () => {
@@ -136,19 +163,28 @@ function useJobState(): JobStateView {
   const startCheck = useCallback(() => {
     // Show the first step immediately; the worker's reply carries the same
     // state a moment later and every step after it arrives as a push.
+    version.current += 1
     setState((previous) => ({
       ...INITIAL_JOB_STATE,
       url: previous.url,
       title: previous.title,
       status: 'extracting',
     }))
+
+    const at = version.current
     const request: StartCheckMessage = { type: 'START_CHECK' }
     void chrome.runtime
       .sendMessage(request)
       .then((response: unknown) => {
-        if (isStateMessage(response)) setState(response.state)
+        if (version.current !== at || !isStateMessage(response)) return
+        version.current += 1
+        setState(response.state)
       })
-      .catch(() => setState(unreachable))
+      .catch(() => {
+        if (version.current !== at) return
+        version.current += 1
+        setState(unreachable)
+      })
   }, [])
 
   return { state, startCheck }
@@ -190,21 +226,34 @@ function isStateMessage(value: unknown): value is StateMessage {
   return message.type === 'STATE' && typeof message.state === 'object' && message.state !== null
 }
 
+/**
+ * The claim ids of the current job, in article order, or null if this state has
+ * none.
+ *
+ * The service worker records them from the `claims_found` event (decision 15)
+ * onto `JobState.claimIds`. The value is still validated rather than trusted:
+ * it arrives over `chrome.runtime` messaging from a worker that may be an
+ * older build, and via `chrome.storage.session`, which outlives code. A state
+ * that carries no usable list — an older worker, an older backend still
+ * sending `{type, count}` — falls back to `claim.start` order instead of
+ * breaking.
+ */
+function claimIdsOf(state: JobState): string[] | null {
+  const raw: unknown = state.claimIds
+  if (!Array.isArray(raw) || raw.length === 0) return null
+  return raw.every((id): id is string => typeof id === 'string') ? raw : null
+}
+
 /* -------------------------------------------------------------------------- */
 /* States                                                                      */
 /* -------------------------------------------------------------------------- */
 
 function ReadyState({ onCheck }: { onCheck: () => void }): ReactElement {
   const page = usePageInfo()
-  const title = page?.title.trim() ? page.title.trim() : COPY.untitled
-  const site = page ? siteLabel(page.url) : null
 
   return (
     <div className="rv-stack">
-      <div className="rv-article">
-        <div className="rv-article-title">{title}</div>
-        {site !== null && <div className="rv-article-meta">{site}</div>}
-      </div>
+      <ArticleCard title={page?.title ?? null} url={page?.url ?? null} />
 
       <button type="button" className="rv-btn rv-btn-primary" onClick={onCheck}>
         {COPY.check}
@@ -232,33 +281,70 @@ function ReadyState({ onCheck }: { onCheck: () => void }): ReactElement {
 }
 
 function CheckingState({ state }: { state: JobState }): ReactElement {
-  const expected = Math.max(state.claimCount ?? 0, state.claims.length)
-
   return (
     <div className="rv-stack rv-stack-check">
+      {/* Nothing is known about the article until the extractor answers, so
+          during `extracting` there is simply no card. */}
+      {(state.title !== null || state.url !== null) && (
+        <ArticleCard title={state.title} url={state.url} />
+      )}
       <Stepper
-        status={state.status}
+        // `extracting` and `checking` are the only statuses that reach here.
+        status={state.status === 'checking' ? 'checking' : 'extracting'}
         claimCount={state.claimCount}
         resolvedCount={state.claims.length}
       />
-      {expected > 0 && <ClaimList claims={state.claims} expected={expected} />}
+      <ClaimList
+        claims={state.claims}
+        claimIds={claimIdsOf(state)}
+        claimCount={state.claimCount}
+      />
     </div>
   )
 }
 
-function DoneState({ state }: { state: JobState }): ReactElement {
+/**
+ * The finished check — and the way out of it.
+ *
+ * `JobState` is persisted in `chrome.storage.session`, so this state survives
+ * the popup closing, the service worker being torn down, and the reader
+ * navigating to a different article. Without a control of its own it was a trap:
+ * the only status that offered a "Check this article" button was `idle`, and
+ * nothing here ever returned to it. The button below is the same `startCheck`
+ * the ready and error states use, and the card above it says which article the
+ * numbers describe — which is the other half of the confusion, since the result
+ * on screen may belong to an article the reader has already left.
+ */
+function DoneState({ state, onCheck }: { state: JobState; onCheck: () => void }): ReactElement {
+  const page = usePageInfo()
+  // Only claim "again" when we positively know the tab still holds the article
+  // that was checked; when the tab is unknown, the honest label is the one that
+  // describes what the button actually does.
+  const again = page !== null && state.url !== null && sameArticle(page.url, state.url)
+
   return (
     <div className="rv-stack">
-      {state.counts !== null && <Summary counts={state.counts} />}
-      {state.claims.length > 0 && (
-        <ClaimList claims={state.claims} expected={state.claims.length} />
+      {(state.title !== null || state.url !== null) && (
+        <ArticleCard title={state.title} url={state.url} caption={COPY.checkedArticle} />
       )}
+
+      {state.counts !== null && <Summary counts={state.counts} />}
+
+      <ClaimList
+        claims={state.claims}
+        claimIds={claimIdsOf(state)}
+        claimCount={state.claimCount}
+      />
+
+      <button type="button" className="rv-btn rv-btn-primary" onClick={onCheck}>
+        {again ? COPY.checkAgain : COPY.check}
+      </button>
 
       {/* The side panel is milestone 4. */}
       <span className="rv-btn-slot" title={COPY.reportSoon}>
         <button
           type="button"
-          className="rv-btn rv-btn-primary rv-btn-compact"
+          className="rv-btn rv-btn-secondary rv-btn-compact"
           disabled
           title={COPY.reportSoon}
           aria-label={`${COPY.report}. ${COPY.reportSoon}`}
@@ -302,29 +388,95 @@ function ErrorState({
 }
 
 /* -------------------------------------------------------------------------- */
+/* Article card                                                                */
+/* -------------------------------------------------------------------------- */
+
+/** The soft-bg title card: what article this screen is talking about. */
+function ArticleCard({
+  title,
+  url,
+  caption,
+}: {
+  title: string | null
+  url: string | null
+  caption?: string
+}): ReactElement {
+  const heading = title !== null && title.trim() !== '' ? title.trim() : COPY.untitled
+  const site = url === null ? null : siteLabel(url)
+
+  return (
+    <div className="rv-article">
+      {caption !== undefined && <div className="rv-article-caption">{caption}</div>}
+      <div className="rv-article-title">{heading}</div>
+      {site !== null && <div className="rv-article-meta">{site}</div>}
+    </div>
+  )
+}
+
+/* -------------------------------------------------------------------------- */
 /* Claim list                                                                  */
 /* -------------------------------------------------------------------------- */
 
-/**
- * `expected` rows, filled from the top in arrival order and padded with pending
- * placeholders. Claims resolve out of order, so a row is written once and never
- * rewritten — nothing already on screen shuffles when the next claim lands.
- */
-function ClaimList({ claims, expected }: { claims: Claim[]; expected: number }): ReactElement {
-  const slots: (Claim | null)[] = Array.from({ length: expected }, (_, i) => claims[i] ?? null)
+interface Row {
+  /** React key. Stable across a row's pending → resolved transition. */
+  key: string
+  /** 1-based position in the article, for "Claim 3 of 6". */
+  index: number
+  claim: Claim | null
+}
+
+interface ClaimListProps {
+  /** Claims received so far, in arrival order — which is not article order. */
+  claims: Claim[]
+  /** Every claim id this job will send, in article order; null on an older worker. */
+  claimIds: string[] | null
+  /** How many claims the backend said it would check; null until `claims_found`. */
+  claimCount: number | null
+}
+
+function ClaimList({ claims, claimIds, claimCount }: ClaimListProps): ReactElement | null {
+  const rows = buildRows(claims, claimIds, claimCount)
+  if (rows.length === 0) return null
 
   return (
     <ol className="rv-rows">
-      {slots.map((claim, i) => (
-        <ClaimRow
-          key={claim?.id ?? `pending-${i}`}
-          index={i + 1}
-          total={expected}
-          claim={claim}
-        />
+      {rows.map((row) => (
+        <ClaimRow key={row.key} index={row.index} total={rows.length} claim={row.claim} />
       ))}
     </ol>
   )
+}
+
+/**
+ * One row per claim, in article order.
+ *
+ * `claims_found` hands over every claim id ascending by the claim's `start`
+ * offset, so all the rows can be allocated before a single claim arrives and
+ * each one is filled when its own claim lands. That is what makes a live run
+ * (which resolves 3, 1, 6, 4, 2, 5 — the demo's scattered fill,
+ * docs/design-handoff.md § 1 state C) and a cache replay (which resolves 1..6)
+ * render the same article the same way, with no row ever rewritten. A claim
+ * whose id is not in the list is ignored rather than appended: an unexpected id
+ * is a bug on the wire, not a seventh row.
+ *
+ * Without usable ids — an older backend, an older persisted state — the rows
+ * fall back to `claim.start` order, which lands in the right place once
+ * everything has arrived even though earlier rows may be rewritten on the way.
+ */
+function buildRows(claims: Claim[], claimIds: string[] | null, claimCount: number | null): Row[] {
+  const expected = Math.max(claimCount ?? 0, 0)
+
+  if (claimIds !== null && claimIds.length >= expected) {
+    const byId = new Map(claims.map((claim) => [claim.id, claim]))
+    return claimIds.map((id, i) => ({ key: id, index: i + 1, claim: byId.get(id) ?? null }))
+  }
+
+  const ordered = [...claims].sort((a, b) => a.start - b.start)
+  const total = Math.max(expected, ordered.length)
+  return Array.from({ length: total }, (_, i) => {
+    const claim = ordered[i] ?? null
+    return { key: claim?.id ?? `pending-${i}`, index: i + 1, claim }
+  })
 }
 
 /* -------------------------------------------------------------------------- */
@@ -335,6 +487,26 @@ function ClaimList({ claims, expected }: { claims: Claim[]; expected: number }):
 function siteLabel(url: string): string | null {
   try {
     return new URL(url).hostname.replace(/^www\./, '')
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Same article, for the done state's button label only.
+ *
+ * The fragment and a trailing slash never change which article a URL names, so
+ * they are dropped; the query string can (`?page=2`), so it is kept.
+ */
+function sameArticle(a: string, b: string): boolean {
+  const left = canonicalUrl(a)
+  return left !== null && left === canonicalUrl(b)
+}
+
+function canonicalUrl(raw: string): string | null {
+  try {
+    const url = new URL(raw)
+    return `${url.protocol}//${url.host}${url.pathname.replace(/\/+$/, '')}${url.search}`
   } catch {
     return null
   }
