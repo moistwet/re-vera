@@ -1,0 +1,54 @@
+# Decision log
+
+Decisions that reconcile the project brief (`CLAUDE.md`) with the design files
+(`sieve-live-demo.dc.html`, `design-handoff.md`). Where these conflict with the
+design files, this log and `CLAUDE.md` win.
+
+## 2026-08-31 — brief/design reconciliation (with Isaac)
+
+1. **Name: Re-Vera.** The prototype's "Sieve" name is replaced on every surface.
+   The funnel glyph stays as the MVP logo mark.
+2. **Reliability score banner: deferred.** The injected 0–100 ring above the
+   headline is cut from the MVP; it may return later. The `done` event already
+   carries per-verdict counts, so re-adding it needs no schema change. Until
+   then, nothing Re-Vera renders reflows the host page.
+3. **No "flagged" vocabulary.** The page bar's compact done state uses the four
+   canonical verdict names and ellipsizes when narrow; the demo's
+   "2 flagged" copy is dropped (rule 1: identical names on every surface).
+4. **Confidence is nullable.** Schema: `confidence: "low" | "medium" | "high" | null`,
+   where `null` iff `verdict == "unverifiable"`. The UI hides the confidence
+   meter for those claims (matches the demo's behaviour, which the old schema
+   couldn't express).
+5. **Unverifiable claims carry no sources.** Rule 2 reworded: `unverifiable`
+   ships an explanation of what was searched and not found, plus the trail,
+   with `sources: []` (matches the demo).
+6. **Cut features** (not part of the core user journey): reader-count footer
+   ("340 readers…"), 👍/👎 feedback, "Report a mistake" + its toasts, game-mode
+   streak line. The game scoreboard keeps "You spotted X of 3" and the tip box.
+
+## 2026-08-31 — cost & pipeline decisions
+
+7. **Cheapest model tier per stage, swappable via env.**
+   `OPENAI_MODEL_EXTRACT` / `OPENAI_MODEL_STANCE` / `OPENAI_MODEL_JUDGE` default
+   to the cheapest mini-tier model; any stage can be pointed at a stronger
+   model during test runs without code changes. Escalate a stage only if it
+   fails the golden-set eval.
+8. **Claims capped at 8 per article** (`MAX_CLAIMS=8`). Extraction ranks by
+   check-worthiness and the pipeline verifies the top 8.
+9. **Retrieval short-circuit.** A Google Fact Check (ClaimReview) hit skips web
+   search for that claim; passages capped per claim (6). Web search is the
+   dominant per-claim cost.
+10. **Install-ID daily cap (20) lands in milestone 1** — it bounds cost, not
+    just abuse. The per-IP backstop moves to milestone 5 and stays loose
+    (school NAT shares one IP across many users).
+11. **"Guess first" starts the backend check on click** (still a manual
+    trigger), so Reveal is near-instant. Reveal before all claims resolve:
+    show resolved claims, let the rest flip in as they arrive.
+12. **Anchoring strategy:** search for the exact quote with surrounding
+    context as the primary anchor; `start`/`end` offsets are a hint only
+    (extracted text never matches DOM text byte-for-byte).
+13. **SSE keep-alive comment every ~20 s** so the MV3 service worker's stream
+    fetch isn't idle-killed mid-check.
+14. **Motion:** fluid/cool animations are wanted but polish is deferred to
+    milestone 5. Reduced-motion is wired correctly from the start, including a
+    JS `matchMedia` check for rAF-driven animation (the demo only covers CSS).
