@@ -1,0 +1,14 @@
+{
+  "_note": "One claim whose quote occurs twice in repetition_article.json. Replayed by the test that a repeated quote resolves deterministically to its first occurrence.",
+  "json": {
+    "claims": [
+      {
+        "quote": "Rents rose by 4% in 2024",
+        "kind": "numeric",
+        "checkworthiness": 0.9
+      }
+    ]
+  },
+  "prompt_tokens": 240,
+  "completion_tokens": 31
+}

@@ -1,0 +1,103 @@
+{
+  "_fictional": "FICTIONAL RECORDINGS, HAND-WRITTEN, NEVER CAPTURED. This repository has no OPENAI_API_KEY, no GOOGLE_FACTCHECK_API_KEY and no route to either service, so nothing here was recorded from a live API. Each entry is what a plausible provider or model answer would look like for one claim of the fictional golden set — evidence for testing Re-Vera's rules, not evidence about the world, and not evidence that any real model returns these answers. Every outlet, URL, figure and quotation is invented. See eval/fixtures/README.md.",
+  "claims": {
+    "hdb-01": {
+      "official": [
+        {
+          "outlet": "Housing Data Portal",
+          "url": "https://data.gov.example/datasets/resale-price-index",
+          "date": "2026-01-23",
+          "stance": "refutes",
+          "quote": "The resale price index rose 1.4 per cent in the fourth quarter of 2025",
+          "text": "The resale price index rose 1.4 per cent in the fourth quarter of 2025, the smallest quarterly increase in two years."
+        }
+      ],
+      "judge": {
+        "verdict": "contradicted",
+        "confidence": "high",
+        "evidence": "The Housing Data Portal records a 1.4 per cent quarterly rise, not 30 per cent.",
+        "cited_spans": [
+          "The resale price index rose 1.4 per cent in the fourth quarter of 2025"
+        ]
+      }
+    },
+    "hdb-02": {
+      "web": [
+        {
+          "outlet": "Island Wire",
+          "url": "https://island-wire.example/million-dollar-flats-2025",
+          "date": "2026-01-09",
+          "stance": "supports",
+          "quote": "1,043 resale flats sold for at least a million dollars in 2025",
+          "text": "1,043 resale flats sold for at least a million dollars in 2025, the first year the total passed a thousand."
+        },
+        {
+          "outlet": "Kopitiam Daily",
+          "url": "https://kopitiam-daily.example/million-dollar-flats",
+          "date": "2026-01-10",
+          "stance": "supports",
+          "quote": "More than a thousand flats changed hands above the million-dollar mark last year",
+          "text": "More than a thousand flats changed hands above the million-dollar mark last year, according to caveats lodged with the housing board."
+        }
+      ],
+      "judge": {
+        "verdict": "supported",
+        "confidence": "high",
+        "evidence": "Island Wire and Kopitiam Daily both report more than a thousand million-dollar resale flats in 2025.",
+        "cited_spans": [
+          "1,043 resale flats sold for at least a million dollars in 2025",
+          "More than a thousand flats changed hands above the million-dollar mark last year"
+        ]
+      }
+    },
+    "hdb-03": {
+      "web": [
+        {
+          "outlet": "Straits Beacon",
+          "url": "https://straits-beacon.example/seven-year-wait-survey",
+          "date": "2026-02-14",
+          "stance": "supports",
+          "quote": "Buyers now wait seven years on average",
+          "text": "Buyers now wait seven years on average, a survey of prospective flat owners published this week reports."
+        },
+        {
+          "outlet": "Housing Wait Survey",
+          "url": "https://survey-archive.example/2026-housing-wait.pdf",
+          "date": "2026-02-10",
+          "stance": "neutral",
+          "quote": "The study surveyed 38 people at two sales galleries",
+          "text": "The study surveyed 38 people at two sales galleries over one weekend. The authors call the sample small and not representative of applicants nationally."
+        }
+      ],
+      "judge": {
+        "verdict": "missing_context",
+        "confidence": "low",
+        "evidence": "Straits Beacon reports the seven-year figure, but the Housing Wait Survey behind it questioned 38 people at two galleries.",
+        "cited_spans": [
+          "Buyers now wait seven years on average"
+        ]
+      }
+    },
+    "hdb-04": {
+      "cited": [
+        {
+          "outlet": "Housing board transcript",
+          "url": "https://transcripts.gov.example/housing-market-doorstop",
+          "date": "2026-02-11",
+          "stance": "refutes",
+          "quote": "the market is cooling in line with our expectations",
+          "text": "The spokesperson said: “Prices are being monitored closely and the market is cooling in line with our expectations.” The phrase reported was not used."
+        }
+      ],
+      "judge": {
+        "verdict": "contradicted",
+        "confidence": "high",
+        "evidence": "The housing board transcript has the spokesperson describing a market cooling in line with expectations.",
+        "cited_spans": [
+          "the market is cooling in line with our expectations"
+        ]
+      }
+    },
+    "hdb-05": {}
+  }
+}

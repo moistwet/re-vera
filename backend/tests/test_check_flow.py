@@ -699,11 +699,11 @@ async def test_the_deadline_is_derived_from_settings(monkeypatch: pytest.MonkeyP
     monkeypatch.setattr(check_route, "STREAM_DEADLINE_FACTOR", 4.0)
     monkeypatch.setattr(check_route, "MIN_STREAM_DEADLINE_SECONDS", 10.0)
 
-    slow = build_settings(max_claims=8, mock_step_delay=1.0)
+    slow = build_settings(max_claims=8, mock_step_delay=1.0, use_mock_pipeline=True)
     assert check_route.stream_deadline_seconds(slow) == 32.0
 
     # A configuration with no per-claim pacing still gets a usable budget.
-    instant = build_settings(max_claims=8, mock_step_delay=0.0)
+    instant = build_settings(max_claims=8, mock_step_delay=0.0, use_mock_pipeline=True)
     assert check_route.stream_deadline_seconds(instant) == 10.0
 
 
@@ -743,6 +743,7 @@ async def test_the_stream_sends_keep_alive_comments_without_dying(
             daily_cap=TEST_DAILY_CAP,
             max_claims=TEST_MAX_CLAIMS,
             mock_step_delay=0.25,
+            use_mock_pipeline=True,
         )
     )
 

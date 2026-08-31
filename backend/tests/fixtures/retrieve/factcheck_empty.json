@@ -1,0 +1,6 @@
+{
+  "_note": "FICTIONAL. A ClaimReview search that matched nothing — the ordinary case, and the one that lets retrieval fall through to web search.",
+  "status_code": 200,
+  "url": "https://factchecktools.googleapis.com/v1alpha1/claims:search",
+  "json": { "claims": [] }
+}

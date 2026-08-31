@@ -1,0 +1,123 @@
+{
+  "_fictional": "FICTIONAL RECORDINGS, HAND-WRITTEN, NEVER CAPTURED. This repository has no OPENAI_API_KEY, no GOOGLE_FACTCHECK_API_KEY and no route to either service, so nothing here was recorded from a live API. Each entry is what a plausible provider or model answer would look like for one claim of the fictional golden set — evidence for testing Re-Vera's rules, not evidence about the world, and not evidence that any real model returns these answers. Every outlet, URL, figure and quotation is invented. See eval/fixtures/README.md.",
+  "claims": {
+    "mrt-01": {
+      "official": [
+        {
+          "outlet": "Land Transport Data Portal",
+          "url": "https://data.gov.example/datasets/rail-delay-incidents",
+          "date": "2026-01-20",
+          "stance": "refutes",
+          "quote": "Delay incidents on the East-West Line fell 12 per cent in 2025",
+          "text": "Delay incidents on the East-West Line fell 12 per cent in 2025, from 41 to 36 incidents lasting more than five minutes."
+        }
+      ],
+      "judge": {
+        "verdict": "contradicted",
+        "confidence": "high",
+        "evidence": "The Land Transport Data Portal records East-West Line delays falling 12 per cent in 2025.",
+        "cited_spans": [
+          "Delay incidents on the East-West Line fell 12 per cent in 2025"
+        ]
+      }
+    },
+    "mrt-02": {
+      "web": [
+        {
+          "outlet": "Rail Regulator",
+          "url": "https://rail.gov.example/reliability/2025-mkbf",
+          "date": "2026-01-18",
+          "stance": "supports",
+          "quote": "1.2 million train-kilometres between delays in 2025",
+          "text": "The East-West Line recorded 1.2 million train-kilometres between delays in 2025, up from 1.0 million a year earlier."
+        }
+      ],
+      "judge": {
+        "verdict": "supported",
+        "confidence": "high",
+        "evidence": "The Rail Regulator publishes 1.2 million train-kilometres between delays for 2025.",
+        "cited_spans": [
+          "1.2 million train-kilometres between delays in 2025"
+        ]
+      }
+    },
+    "mrt-03": {
+      "cited": [
+        {
+          "outlet": "Operator briefing transcript",
+          "url": "https://transcripts.gov.example/rail-operator-briefing",
+          "date": "2026-01-22",
+          "stance": "refutes",
+          "quote": "we are among the more reliable networks in the region",
+          "text": "The chief executive said: “On availability we are among the more reliable networks in the region, and we intend to stay there.” No comparison of the kind reported was made."
+        }
+      ],
+      "judge": {
+        "verdict": "contradicted",
+        "confidence": "high",
+        "evidence": "The operator briefing transcript has the chief executive calling the network among the more reliable in the region.",
+        "cited_spans": [
+          "we are among the more reliable networks in the region"
+        ]
+      }
+    },
+    "mrt-04": {
+      "web": [
+        {
+          "outlet": "Harbour Post",
+          "url": "https://harbour-post.example/commuter-poll-nine-in-ten",
+          "date": "2026-02-02",
+          "stance": "supports",
+          "quote": "Nine in ten commuters said they were late at least once a week",
+          "text": "Nine in ten commuters said they were late at least once a week, a reader poll published this month found."
+        },
+        {
+          "outlet": "Harbour Post methodology",
+          "url": "https://poll-archive.example/harbour-commuter-poll-method",
+          "date": "2026-02-02",
+          "stance": "neutral",
+          "quote": "drew 60 respondents",
+          "text": "The commuter poll was open on the site for four days and drew 60 respondents. The publisher notes it is self-selected and not representative of ridership."
+        }
+      ],
+      "judge": {
+        "verdict": "missing_context",
+        "confidence": "medium",
+        "evidence": "Harbour Post reports the nine-in-ten figure, but its own methodology note describes a self-selected reader poll.",
+        "cited_spans": [
+          "Nine in ten commuters said they were late at least once a week"
+        ]
+      }
+    },
+    "mrt-05": {},
+    "mrt-06": {
+      "web": [
+        {
+          "outlet": "Island Wire",
+          "url": "https://island-wire.example/punctuality-every-quarter",
+          "date": "2026-01-25",
+          "stance": "supports",
+          "quote": "Punctuality improved in every quarter of 2025",
+          "text": "Punctuality improved in every quarter of 2025, the regulator's quarterly figures show."
+        },
+        {
+          "outlet": "Kopitiam Daily",
+          "url": "https://kopitiam-daily.example/rail-punctuality-2025",
+          "date": "2026-01-26",
+          "stance": "supports",
+          "quote": "Each quarter of 2025 recorded better punctuality than the one before it",
+          "text": "Each quarter of 2025 recorded better punctuality than the one before it, according to figures published this week."
+        }
+      ],
+      "judge": {
+        "verdict": "supported",
+        "confidence": "medium",
+        "evidence": "Island Wire and Kopitiam Daily both report punctuality improving in every quarter of 2025.",
+        "cited_spans": [
+          "Punctuality improved in every quarter of 2025",
+          "Each quarter of 2025 recorded better punctuality than the one before it"
+        ]
+      }
+    }
+  }
+}

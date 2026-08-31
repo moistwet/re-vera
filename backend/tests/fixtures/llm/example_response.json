@@ -1,0 +1,11 @@
+{
+  "_note": "A minimal well-formed structured answer, replayed by tests/test_llm.py through ReplayTransport. It matches the throwaway `Answer` model defined in that test, not any pipeline stage's schema — stages add their own recordings next to this one. Fictional, like everything under tests/fixtures/.",
+  "json": {
+    "verdict": "contradicted",
+    "cited_spans": [
+      "the median adjustment is 4 per cent"
+    ]
+  },
+  "prompt_tokens": 812,
+  "completion_tokens": 143
+}

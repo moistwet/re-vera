@@ -1,0 +1,13 @@
+{
+  "_note": "`unverifiable` with a `high` confidence attached. The verdict is honest; the confidence is impossible, and is dropped rather than allowed to reach a reader.",
+  "json": {
+    "verdict": "unverifiable",
+    "confidence": "high",
+    "evidence": "The passages are about the same rent review but none of them gives a figure for the increase.",
+    "cited_spans": [
+      "The revised rents take effect on 1 January"
+    ]
+  },
+  "prompt_tokens": 744,
+  "completion_tokens": 86
+}

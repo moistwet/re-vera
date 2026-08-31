@@ -1,0 +1,6 @@
+{
+  "_note": "FICTIONAL. A 200 whose body is an HTML error page rather than JSON, as a proxy or captive portal sends. The provider must treat it as a miss, not raise.",
+  "status_code": 200,
+  "url": "https://factchecktools.googleapis.com/v1alpha1/claims:search",
+  "text": "<html><head><title>Gateway</title></head><body>Service unavailable</body></html>"
+}

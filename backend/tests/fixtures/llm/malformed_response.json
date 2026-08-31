@@ -1,0 +1,6 @@
+{
+  "_note": "Deliberately not valid JSON, recorded in the `content` form because the `json` form cannot express a broken answer. Replayed by tests/test_llm.py to prove that an answer which is not the requested schema surfaces as LLMInvalidOutput — not retried (it is a real answer, and paying twice for it buys nothing) and never passed through to a reader.",
+  "content": "{\"verdict\": \"contradicted\", \"cited_spans\": [\"the median",
+  "prompt_tokens": 800,
+  "completion_tokens": 12
+}

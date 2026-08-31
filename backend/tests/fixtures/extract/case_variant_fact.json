@@ -1,0 +1,24 @@
+{
+  "_note": "One fact quoted from two different sentences of repetition_article.json, identical but for the capital letter that starts the first. Both are exact substrings at different offsets, so the span-overlap rule cannot see them; the normalised-text rule can. Replayed by the near-identical de-duplication test.",
+  "json": {
+    "claims": [
+      {
+        "quote": "Rents rose by 4% in 2024",
+        "kind": "numeric",
+        "checkworthiness": 0.9
+      },
+      {
+        "quote": "rents rose by 4% in 2024",
+        "kind": "numeric",
+        "checkworthiness": 0.85
+      },
+      {
+        "quote": "the increase was spread evenly across the year",
+        "kind": "general",
+        "checkworthiness": 0.4
+      }
+    ]
+  },
+  "prompt_tokens": 240,
+  "completion_tokens": 96
+}

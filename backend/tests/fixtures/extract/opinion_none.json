@@ -1,0 +1,8 @@
+{
+  "_note": "The right answer for an article that is entirely opinion and prediction: no claims at all. Replayed against opinion_article.json. Abstaining is a correct answer, not a failure.",
+  "json": {
+    "claims": []
+  },
+  "prompt_tokens": 512,
+  "completion_tokens": 8
+}

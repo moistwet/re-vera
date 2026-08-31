@@ -1,0 +1,44 @@
+{
+  "_note": "Stage 1's happy path: what the extraction model would plausibly return for tests/fixtures/article.json. Every quote is an exact substring of that article's text. Replayed by test_extract.py's realistic-article tests. Fictional, like the article itself.",
+  "json": {
+    "claims": [
+      {
+        "quote": "rise by 40% from 1 January",
+        "kind": "numeric",
+        "checkworthiness": 0.95
+      },
+      {
+        "quote": "More than 200 stalls have already closed this year",
+        "kind": "numeric",
+        "checkworthiness": 0.88
+      },
+      {
+        "quote": "An official spokesperson was quoted as saying rents “will not be capped under any circumstances.”",
+        "kind": "attribution",
+        "checkworthiness": 0.8
+      },
+      {
+        "quote": "eight in ten hawkers are considering leaving the trade",
+        "kind": "numeric",
+        "checkworthiness": 0.7
+      },
+      {
+        "quote": "The last islandwide rent adjustment took effect in 2024",
+        "kind": "numeric",
+        "checkworthiness": 0.62
+      },
+      {
+        "quote": "The review takes effect on 1 January",
+        "kind": "numeric",
+        "checkworthiness": 0.55
+      },
+      {
+        "quote": "they were told of the increase at a briefing last month",
+        "kind": "attribution",
+        "checkworthiness": 0.5
+      }
+    ]
+  },
+  "prompt_tokens": 1043,
+  "completion_tokens": 268
+}

@@ -1,0 +1,13 @@
+{
+  "_note": "The right answer, typed badly: `Contradicted` and `High`. Case and stray spaces are normalised rather than treated as a fifth verdict, so this claim is not lost to a capital letter.",
+  "json": {
+    "verdict": " Contradicted ",
+    "confidence": "High",
+    "evidence": "Island Wire puts the increase at 4 per cent from 1 January, not 40 per cent.",
+    "cited_spans": [
+      "The board's release put the median stall rent adjustment\nat 4 per cent from 1 January"
+    ]
+  },
+  "prompt_tokens": 744,
+  "completion_tokens": 96
+}

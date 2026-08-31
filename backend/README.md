@@ -1,21 +1,35 @@
 # Re-Vera backend
 
-FastAPI service behind the Re-Vera Chrome extension. Milestone 1 is a walking
-skeleton: `POST /check` and `GET /check/{job_id}/stream` are real, backed by a
-**mocked** pipeline that streams the six fictional fixture claims over roughly
-seven seconds. There are no LLM calls and no API keys yet. Redis caching and the
-per-install daily cap are real from day one.
+FastAPI service behind the Re-Vera Chrome extension. `POST /check` and
+`GET /check/{job_id}/stream` are real, and since milestone 2 they are backed by
+the **real five-stage pipeline** — claim extraction, evidence retrieval, stance
+scoring, judging and rule-based aggregation — running over the article the
+client actually posted. Redis caching and the per-install daily cap have been
+real from day one.
 
-**Milestone 1 ignores the submitted article text.** The mock pipeline never
-reads `CheckRequest.text`; it replays `tests/fixtures/article.json` verbatim, so
-every `start`/`end` it streams indexes *that fixture's own* text, not the text
-the client posted — even though `shared/schema.json` defines the pair as
-character offsets into `CheckRequest.text` and milestone 3's anchoring is built
-on that contract (`docs/decisions.md` §12). The offsets are deliberately left
-un-faked rather than recomputed against the submitted article. **A client must
-not resolve these offsets against the article it sent until the real pipeline
-lands in milestone 2**; the claim's `quote` is the only field that ties it to any
-real text before then.
+The milestone-1 mock is still here and still works: set `USE_MOCK_PIPELINE=true`
+and a check streams the six fictional fixture claims with the prototype's pacing,
+no API key and no spend. That is how the extension is developed and how the demo
+runs offline. It is a **switch, not a fallback** — a real check that cannot run
+publishes an `error` event rather than quietly streaming fixture verdicts for
+somebody's actual article, which a reader would have no way to tell apart from a
+real answer.
+
+**No live API call was ever made from this repository.** There is no
+`OPENAI_API_KEY`, no `GOOGLE_FACTCHECK_API_KEY` and no route to either service in
+the environment milestone 2 was built in. Every stage was written and tested
+against fixtures through injected seams, and every assumption about a provider's
+request or response shape is written down in the one module docstring that makes
+it (`app/llm.py`, and one per provider under `app/pipeline/providers/`). Nothing
+about the live path has been verified; expect the shape assumptions, not the
+logic, to be what needs adjusting on the first run with a real key.
+
+**Offsets now mean what the schema says they mean.** The mock ignores
+`CheckRequest.text` and streams the fixture's own offsets, so a client must not
+resolve them against the article it sent while `USE_MOCK_PIPELINE=true`. The real
+pipeline extracts claims from the submitted text and guarantees
+`request.text[start:end] == quote` for every claim it publishes — the contract
+milestone 3's anchoring is built on (`docs/decisions.md` §12).
 
 Requires Python 3.12 (see `.python-version`) and a Redis on `localhost:6379`.
 
@@ -40,6 +54,8 @@ docker compose up redis            # add -d to background it
 # 4. run the API
 uv run uvicorn app.main:app --reload
 #   http://127.0.0.1:8000/docs
+#   …with no API key, and no spend, on the six fictional fixture claims:
+#   USE_MOCK_PIPELINE=true uv run uvicorn app.main:app --reload
 
 # 5. tests, lint, types
 uv run pytest
@@ -54,8 +70,10 @@ The dev tools live in the `dev` **extra**, so a bare `uv sync` will not install
 them — use `uv sync --extra dev` (equivalent to step 1's `uv pip install`).
 `uv.lock` is written by `uv` on the first `uv run`; delete it to re-resolve.
 
-Tests use [fakeredis] and never touch the network or a live Redis — step 3 is
-only needed to run the server by hand. The pin is `fakeredis[lua]`, and the extra
+Tests use [fakeredis] and never touch the network, a live Redis or a model — step
+3 is only needed to run the server by hand, and no test has ever needed a key.
+Model answers and provider responses are replayed from hand-written fixtures
+through the same seams production uses. The pin is `fakeredis[lua]`, and the extra
 is **not** optional: `app/events.py` publishes through a Lua script, and
 fakeredis can only answer `EVAL`/`EVALSHA` when the `lupa` that extra pulls is
 installed. A plain `fakeredis` pin turns the whole event suite red with
@@ -64,6 +82,33 @@ guard it so the next person to tidy the dependency list gets a clear failure
 instead of that one.
 
 [fakeredis]: https://pypi.org/project/fakeredis/
+
+### The live-Redis smoke run
+
+`scripts/live_redis_smoke.py` is the one thing the suite deliberately cannot do:
+it runs the real pipeline against a **real `redis-server`**, because
+`app/events.py` publishes through a Lua script and depends on `RPUSH` returning
+the new list length inside it, on `EXPIRE` semantics and on pub/sub ordering —
+three things a fake can only promise. It checks the event sequence, that the
+cache is written after the last claim and before `done`, that a second check of
+the same URL is served from that cache, that one failing claim still yields a
+complete run, that zero extracted claims ends cleanly, that the daily cap and
+the unknown-job 404 still hold, and that every per-claim cost rule holds on a
+whole run.
+
+It is **not** a pytest, so `uv run pytest` stays hermetic. It needs no API key:
+the LLM and the four providers are the same fakes `tests/test_pipeline_run.py`
+uses, imported rather than copied so the script cannot drift from the suite. The
+only real I/O is the loopback socket to Redis.
+
+```bash
+redis-server --port 6399 --save '' --appendonly no --daemonize yes
+uv run python scripts/live_redis_smoke.py --redis-url redis://localhost:6399/0
+redis-cli -p 6399 shutdown nosave
+```
+
+It prints one `[PASS]`/`[FAIL]` line per check and exits non-zero if any failed.
+Use a spare port: it calls `FLUSHDB` between scenarios and on the way out.
 
 ## Redis in this environment
 
@@ -186,14 +231,72 @@ The stream closes after `done` or `error`, and two things guarantee it closes:
   stream is not covered by the daily cap, so subscribing to any id anyone asked
   for would be an unauthenticated way to pin one Redis pub/sub connection per
   request.
-* **Every stream has a deadline**, derived from `MAX_CLAIMS × MOCK_STEP_DELAY`
-  with a generous multiplier and a two-minute floor. A worker can vanish — the
-  process restarts and the task, being process-local, is simply gone — leaving a
+* **Every stream has a deadline**, derived from the configured job shape: for the
+  real pipeline, the arithmetic worst case of its own timeouts (one extraction
+  call, then `ceil(MAX_CLAIMS / PIPELINE_CONCURRENCY)` batches of claims, each
+  claim capped at three provider calls plus a stance and a judge call, each model
+  call retried `LLM_MAX_RETRIES` times); for the mock, `MAX_CLAIMS ×
+  MOCK_STEP_DELAY` with a generous multiplier. Both have a two-minute floor. A
+  real check takes a small fraction of its budget — the number exists to be
+  larger than the slowest honest run, because cutting off a check that is still
+  working would be far worse than holding one connection open. A worker can
+  vanish — the process restarts and the task, being process-local, is simply
+  gone — leaving a
   job that will never publish `done`. Past the deadline the stream emits
   `event: error` with `{"type":"error","code":"timeout","message":…}` and closes.
   That one message carries **no `id:` line**: it is the relay's own event, never
   written to the job's replay list, so it borrows no sequence number and leaves
   the client's last event id where it was.
+
+## The pipeline
+
+`app/pipeline/run.py` is the orchestrator. `POST /check` spawns it, it publishes
+everything the reader sees, and it never raises — the route spawns it and never
+awaits it, so a raise would be unheard:
+
+```
+extract_claims(article)                  one LLM call, article truncated first
+  → publish claims_found (ids, article order)
+  → per claim, PIPELINE_CONCURRENCY at a time:
+        retrieve_passages   fact-check → web search → official / cited source
+        score_passages      one LLM call, all of that claim's passages at once
+        judge_claim         one LLM call; no passages means no call at all
+        aggregate           rules only, no model
+      → publish claim as soon as it resolves
+  → set_check(...)  then  publish done
+```
+
+Claims are worked concurrently and published the moment each resolves, so they
+arrive out of article order on purpose — that progressive fill is the product's
+signature interaction, and it is why `claims_found` carries every id up front
+(`docs/decisions.md` §15).
+
+What can go wrong, and what happens:
+
+| Situation | What the reader gets |
+| --- | --- |
+| One claim's provider or model call fails | That claim only, as `unverifiable`, with an evidence sentence saying the check did not finish. Every other claim gets a real verdict, and the run is **not** cached — we cache results, not outages. |
+| No check-worthy claims in the article | `claims_found` with count 0 and an immediate `done` with a zeroed tally. Cached, so re-reading an opinion column is free. |
+| Extraction fails, or `OPENAI_API_KEY` is unset | One `error` event and the stream closes. Never `claims_found: 0`, which would tell a reader nothing here is worth checking when nothing was checked. |
+
+Everything a stage sends outward goes through `PipelineDeps` — the LLM client and
+the four retrieval providers — so the whole pipeline runs offline with fakes:
+
+```python
+deps = PipelineDeps(llm=LLMClient(..., transport=my_fake), providers=my_providers)
+await run_pipeline(redis, job_id, request, settings=settings, deps=deps)
+```
+
+`tests/test_pipeline_run.py` does exactly that: a transport that answers by
+schema name and providers that return fictional passages, with no socket opened
+anywhere. `PipelineDeps.build(settings)` builds the production pair instead, and
+owns an HTTP client it closes when the job ends. Per-stage seams are the same
+idea one level down — `app.llm.ReplayTransport` for model answers,
+`app.pipeline.providers.RecordedHttpClient` for provider answers.
+
+Each run logs one line: claims, the per-verdict tally, LLM calls, tokens and
+wall-clock milliseconds. No article text, no quote, no passage, no URL and no
+install id (privacy rule 6); each stage logs its own claim ids and verdicts.
 
 ## Configuration
 
@@ -206,13 +309,38 @@ see `.env.example` for the documented set and `app/config.py` for the defaults.
 | `ALLOWED_EXTENSION_ORIGIN` | `chrome-extension://*`     | The single CORS origin allowed to call us   |
 | `DAILY_CAP`                | `20`                       | Checks per install ID per day (Asia/Singapore) |
 | `MAX_CLAIMS`               | `8`                        | Maximum claims verified per article         |
+| `MAX_PASSAGES_PER_CLAIM`   | `6`                        | Passages kept per claim after de-duplication |
+| `MAX_ARTICLE_CHARS`        | `12000`                    | Article truncated to this before extraction |
+| `PIPELINE_CONCURRENCY`     | `4`                        | Claims verified at once                     |
+| `OPENAI_API_KEY`           | unset                      | Extraction, stance, judge and web search    |
+| `GOOGLE_FACTCHECK_API_KEY` | unset                      | ClaimReview lookups; optional, see below    |
+| `OPENAI_MODEL_EXTRACT`     | `gpt-5-mini`               | Model for stage 1                           |
+| `OPENAI_MODEL_STANCE`      | `gpt-5-mini`               | Model for stage 3                           |
+| `OPENAI_MODEL_JUDGE`       | `gpt-5-mini`               | Model for stage 4                           |
+| `LLM_TIMEOUT_SECONDS`      | `30`                       | Hard ceiling on one model call              |
+| `LLM_MAX_RETRIES`          | `2`                        | Retries *after* the first attempt; 5xx only |
+| `USE_MOCK_PIPELINE`        | `false`                    | Run the milestone-1 mock instead            |
 | `MOCK_STEP_DELAY`          | `0.85`                     | Seconds between mock claim events           |
 
-Milestone-2 keys (`OPENAI_API_KEY`, `GOOGLE_FACTCHECK_API_KEY`,
-`OPENAI_MODEL_EXTRACT`, `OPENAI_MODEL_STANCE`, `OPENAI_MODEL_JUDGE`) are listed
-commented-out in `.env.example` and are not read yet. Secrets live only in
-`backend/.env`, which is gitignored — never in this repo, and never in the
-extension.
+Both keys are read at the point of use, never at startup: the service boots,
+serves every route and runs its whole test suite with neither set. Without
+`OPENAI_API_KEY` a real check ends in an `error` event whose log line names the
+variable; without `GOOGLE_FACTCHECK_API_KEY` retrieval degrades to web search for
+every claim, which still works and costs more — a ClaimReview hit is what lets a
+claim skip the most expensive step it has.
+
+The default model id is **account-dependent and unverified from this
+repository**. It is a mini-tier id the pinned OpenAI SDK enumerates, nothing
+more; an account that cannot call it gets a 4xx, which surfaces loudly and is
+never retried. Set all three `OPENAI_MODEL_*` variables if that happens.
+
+Secrets live only in `backend/.env`, which is gitignored — never in this repo,
+and never in the extension.
+
+The cost controls (`DAILY_CAP`, `MAX_CLAIMS`, `MAX_PASSAGES_PER_CLAIM`,
+`MAX_ARTICLE_CHARS`, the 7-day cache) are not tuning knobs. They are what stands
+between a demo and a surprising bill, and they are never raised "for testing"
+outside local dev.
 
 ## Layout
 
@@ -226,10 +354,28 @@ backend/
     cache.py           7-day URL cache, key check:{sha256(url)} — get/set/delete
     invariants.py      the two cross-field product rules the schema cannot express
     limits.py          per-install daily cap
+    llm.py             the ONLY module that imports the OpenAI SDK
+    prompts/*.md       every prompt, with a version header — never inline in code
     routes/check.py    POST /check, GET /check/{job_id}/stream
-    pipeline/mock.py   milestone-1 fake pipeline (six fixture claims)
+    pipeline/
+      run.py           the orchestrator: five stages onto the event contract
+      types.py         the inter-stage vocabulary + the span verifiers
+      extract.py       1 · claims with exact quotes and offsets
+      retrieve.py      2 · evidence per claim, + providers/ (fact-check, search,
+                           official data, cited source) behind one HTTP seam
+      stance.py        3 · supports / refutes / neutral per passage
+      judge.py         4 · verdict, confidence, evidence — every span verified
+      aggregate.py     5 · rules, not a model; builds the provenance trail
+      mock.py          milestone-1 fake pipeline (six fixture claims)
+  scripts/
+    live_redis_smoke.py   the real pipeline against a real redis-server (not a test)
   tests/
     fixtures/article.json   the fictional hawker article and its six claims
+    fixtures/<stage>/       recorded answers per stage; each has a README
+    test_pipeline_run.py    the orchestrator's event contract, stage by stage
+    test_pipeline_integration.py
+                            the real pipeline behind the real route, and the
+                            per-article cost caps measured on a whole run
 ```
 
 The sample article and its claims are **fictional**. They exist for fixtures and

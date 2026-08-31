@@ -1,0 +1,13 @@
+{
+  "_note": "A span stitched from the end of passage 1 and the start of passage 2. It occurs in the concatenation of the passages and in neither of them, which is why spans are checked against each passage separately.",
+  "json": {
+    "verdict": "supported",
+    "confidence": "high",
+    "evidence": "The board's release and Island Wire agree on the date.",
+    "cited_spans": [
+      "not the 40 per cent circulating online. The revised rents take effect on 1 January"
+    ]
+  },
+  "prompt_tokens": 744,
+  "completion_tokens": 108
+}

@@ -16,13 +16,22 @@ dependencies = [
     "pydantic>=2.7",
     "pydantic-settings>=2.3",
     "redis>=5.0",
+    # Milestone 2. `openai` is imported only inside app/llm.py (and only inside
+    # functions there), so the package is a runtime dependency but never an
+    # import-time one: the service, the mock pipeline and the whole test suite
+    # start with no key and no network. tests/test_llm.py greps the tree to keep
+    # it that way. `httpx` moves up from the dev extra because retrieval's
+    # providers (Google Fact Check, data.gov.sg, cited-source fetches) speak
+    # HTTP directly rather than through the OpenAI SDK; it was already installed
+    # for the ASGI test client, so this pins what was already there.
+    "openai>=1.40",
+    "httpx>=0.27",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=8.2",
     "pytest-asyncio>=0.24",
-    "httpx>=0.27",
     # The `lua` extra pulls lupa, which is what lets fakeredis run EVAL/EVALSHA.
     # app/events.py publishes through a Lua script, so without it every call in
     # the event core fails with `unknown command 'evalsha'` and the suite is red

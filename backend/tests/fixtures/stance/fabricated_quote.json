@@ -1,0 +1,24 @@
+{
+  "_note": "A model that says passage 1 supports the 40% claim and backs it with a sentence passage 1 does not contain. The invented quote is what the verification exists for; the passage is forced to neutral. Passages 2 and 3 are scored normally, so the test can show that one fabrication costs one passage and not the batch.",
+  "json": {
+    "scores": [
+      {
+        "index": 1,
+        "stance": "supports",
+        "quote": "The board confirmed a 40 per cent increase from 1 January."
+      },
+      {
+        "index": 2,
+        "stance": "supports",
+        "quote": "The revised rents take effect on 1 January"
+      },
+      {
+        "index": 3,
+        "stance": "neutral",
+        "quote": ""
+      }
+    ]
+  },
+  "prompt_tokens": 640,
+  "completion_tokens": 98
+}

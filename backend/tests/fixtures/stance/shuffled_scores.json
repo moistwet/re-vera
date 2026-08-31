@@ -1,0 +1,24 @@
+{
+  "_note": "The same three scores as hawker_scores.json, listed 3, 1, 2. Nothing about the answer's order may reach the result: scores are placed by their declared index.",
+  "json": {
+    "scores": [
+      {
+        "index": 3,
+        "stance": "neutral",
+        "quote": ""
+      },
+      {
+        "index": 1,
+        "stance": "refutes",
+        "quote": "The board's release put the median stall rent adjustment at 4 per cent from 1 January"
+      },
+      {
+        "index": 2,
+        "stance": "supports",
+        "quote": "The revised rents take effect on 1 January"
+      }
+    ]
+  },
+  "prompt_tokens": 640,
+  "completion_tokens": 96
+}

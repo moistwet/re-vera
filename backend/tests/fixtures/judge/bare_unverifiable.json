@@ -1,0 +1,11 @@
+{
+  "_note": "`unverifiable` with no spans and no sentence — the emptiest legal answer. The explanation is written for it, naming what was searched.",
+  "json": {
+    "verdict": "unverifiable",
+    "confidence": null,
+    "evidence": "",
+    "cited_spans": []
+  },
+  "prompt_tokens": 744,
+  "completion_tokens": 40
+}

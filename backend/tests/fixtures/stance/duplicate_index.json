@@ -1,0 +1,29 @@
+{
+  "_note": "Passage 1 is scored twice, with opposite stances and two quotes that both really are in it. There is no way to tell which answer the model meant, so the first is kept and the second is logged and dropped.",
+  "json": {
+    "scores": [
+      {
+        "index": 1,
+        "stance": "refutes",
+        "quote": "not the 40 per cent circulating online"
+      },
+      {
+        "index": 1,
+        "stance": "supports",
+        "quote": "The board's release put the median stall rent adjustment at 4 per cent from 1 January"
+      },
+      {
+        "index": 2,
+        "stance": "neutral",
+        "quote": ""
+      },
+      {
+        "index": 3,
+        "stance": "neutral",
+        "quote": ""
+      }
+    ]
+  },
+  "prompt_tokens": 640,
+  "completion_tokens": 104
+}

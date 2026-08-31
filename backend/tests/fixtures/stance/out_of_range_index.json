@@ -1,0 +1,24 @@
+{
+  "_note": "Three passages were sent; the answer scores a seventh and a zeroth as well. Neither names a passage in this batch, so both are dropped — never wrapped round, never appended as a fourth result.",
+  "json": {
+    "scores": [
+      {
+        "index": 7,
+        "stance": "supports",
+        "quote": "An official release confirms the 40 per cent figure."
+      },
+      {
+        "index": 0,
+        "stance": "refutes",
+        "quote": "The board's release put the median stall rent adjustment at 4 per cent from 1 January"
+      },
+      {
+        "index": 2,
+        "stance": "supports",
+        "quote": "The revised rents take effect on 1 January"
+      }
+    ]
+  },
+  "prompt_tokens": 640,
+  "completion_tokens": 88
+}

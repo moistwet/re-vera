@@ -42,7 +42,8 @@ import logging
 import time
 from collections.abc import AsyncGenerator, AsyncIterator, Coroutine
 from contextlib import suppress
-from typing import Annotated, Any
+from math import ceil
+from typing import Annotated, Any, Protocol
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -55,6 +56,8 @@ from app.events import job_exists, mark_job_started, replay_and_stream
 from app.invariants import ClaimInvariantError, validate_claims
 from app.limits import DailyCapExceeded, check_daily_cap
 from app.pipeline.mock import replay_cached, run_mock_pipeline
+from app.pipeline.providers import PROVIDER_TIMEOUT_SECONDS
+from app.pipeline.run import run_pipeline
 from app.schema_models import CheckJob, CheckRequest
 
 logger = logging.getLogger(__name__)
@@ -96,6 +99,29 @@ SSE_HEADERS = {
     # exists to avoid.
     "X-Accel-Buffering": "no",
 }
+
+
+class Pipeline(Protocol):
+    """What this route needs of a pipeline, and all it needs.
+
+    The seam milestone 2 turns on: :func:`~app.pipeline.run.run_pipeline` and
+    :func:`~app.pipeline.mock.run_mock_pipeline` are interchangeable here because
+    they take the same arguments and owe the stream the same events — a
+    ``claims_found``, one ``claim`` per claim, a cache write, then ``done`` or
+    ``error``. Neither may raise: the route spawns it and never awaits it.
+    """
+
+    def __call__(
+        self,
+        redis: Redis,
+        job_id: str,
+        request: CheckRequest,
+        *,
+        settings: Settings,
+    ) -> Coroutine[Any, Any, None]:
+        """Run one check for ``job_id``, publishing everything it produces."""
+        ...
+
 
 _background_tasks: set[asyncio.Task[None]] = set()
 """Strong references to in-flight pipeline tasks.
@@ -162,8 +188,25 @@ async def start_check(payload: CheckRequest, redis: RedisDep, settings: Settings
         ) from exc
 
     await mark_job_started(redis, job_id)
-    _spawn(run_mock_pipeline(redis, job_id, payload, settings=settings))
+    _spawn(pipeline_for(settings)(redis, job_id, payload, settings=settings))
     return CheckJob(job_id=job_id, cached=False, claim_count=None)
+
+
+def pipeline_for(settings: Settings) -> Pipeline:
+    """Choose the pipeline this job runs: the real five stages, or the mock.
+
+    ``USE_MOCK_PIPELINE=true`` selects :func:`~app.pipeline.mock.run_mock_pipeline`,
+    which replays the six fictional fixture claims with the prototype's pacing
+    and makes no API call — that is how the extension is developed and how the
+    demo runs without a key.
+
+    It is a **switch, not a fallback**. The real pipeline never degrades into it:
+    a check that cannot run publishes ``error``, because a reader shown fixture
+    verdicts for the article they are actually reading has no way to tell that is
+    what happened. Both callables have the same signature, which is the whole
+    reason this function can exist.
+    """
+    return run_mock_pipeline if settings.use_mock_pipeline else run_pipeline
 
 
 async def usable_cache_entry(redis: Redis, url: str) -> dict[str, Any] | None:
@@ -233,15 +276,47 @@ async def stream_check(job_id: str, redis: RedisDep, settings: SettingsDep) -> S
 def stream_deadline_seconds(settings: Settings) -> float:
     """How long one stream may run before it gives up on its job.
 
-    Derived from the configured job shape rather than picked out of the air: a
-    job publishes at most ``MAX_CLAIMS`` claims spaced ``MOCK_STEP_DELAY`` apart,
-    and :data:`STREAM_DEADLINE_FACTOR` multiplies that expected duration to leave
-    room for a slow pipeline, with :data:`MIN_STREAM_DEADLINE_SECONDS` as a
-    floor. Milestone 2 replaces the numerator with the real pipeline's budget;
-    the shape of the calculation stays.
+    Derived from the configured job shape rather than picked out of the air, and
+    the shape depends on which pipeline is running:
+
+    * **The mock** publishes at most ``MAX_CLAIMS`` claims spaced
+      ``MOCK_STEP_DELAY`` apart. :data:`STREAM_DEADLINE_FACTOR` multiplies that
+      to leave room for a slow machine.
+    * **The real pipeline** is bounded by its own timeouts rather than by a
+      pacing constant, so :func:`real_pipeline_budget_seconds` adds them up. No
+      multiplier is applied there: every term is already a worst case the
+      pipeline enforces on itself, and multiplying a worst case by twenty would
+      hold a dead job's pub/sub connection open for hours.
+
+    :data:`MIN_STREAM_DEADLINE_SECONDS` floors both, so a configuration with no
+    per-claim pacing still gets a usable budget rather than a zero-length one.
     """
+    if not settings.use_mock_pipeline:
+        return max(MIN_STREAM_DEADLINE_SECONDS, real_pipeline_budget_seconds(settings))
     expected = settings.max_claims * settings.mock_step_delay
     return max(MIN_STREAM_DEADLINE_SECONDS, STREAM_DEADLINE_FACTOR * expected)
+
+
+def real_pipeline_budget_seconds(settings: Settings) -> float:
+    """The arithmetic worst case for one real check, in seconds.
+
+    Every term is a timeout the pipeline enforces itself, so this is a genuine
+    ceiling rather than an estimate: one extraction call, then
+    ``ceil(MAX_CLAIMS / PIPELINE_CONCURRENCY)`` batches of claims, each claim
+    costing at most three provider calls (fact-check, then web search, then the
+    numeric or attribution supplement) plus a stance call and a judge call. Each
+    model call may be attempted ``1 + LLM_MAX_RETRIES`` times, and each attempt is
+    capped at ``LLM_TIMEOUT_SECONDS`` by :class:`~app.llm.LLMClient`.
+
+    A real check takes a small fraction of this. The number exists to be
+    comfortably larger than the slowest honest run, so that the only stream the
+    deadline ever cuts off is one whose worker is gone.
+    """
+    attempts = 1 + max(0, settings.llm_max_retries)
+    per_model_call = settings.llm_timeout_seconds * attempts
+    batches = ceil(settings.max_claims / max(1, settings.pipeline_concurrency))
+    per_claim = 3 * PROVIDER_TIMEOUT_SECONDS + 2 * per_model_call
+    return per_model_call + batches * per_claim
 
 
 def timeout_record() -> dict[str, Any]:

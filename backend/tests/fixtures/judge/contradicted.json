@@ -1,0 +1,14 @@
+{
+  "_note": "The happy path against passages.json. The first span is passage 1 retyped the way a model retypes: a straight apostrophe where the passage has a curly one, and a line break in the middle. Both spans are really there, so the verdict stands.",
+  "json": {
+    "verdict": "contradicted",
+    "confidence": "high",
+    "evidence": "Island Wire and the Hawker Centres Board both put the increase at 4 per cent from 1 January, not 40 per cent.",
+    "cited_spans": [
+      "The board's release put the median stall rent adjustment\nat 4 per cent from 1 January",
+      "The revised rents take effect on 1 January"
+    ]
+  },
+  "prompt_tokens": 744,
+  "completion_tokens": 118
+}

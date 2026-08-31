@@ -1,0 +1,19 @@
+{
+  "_note": "A model that mis-scaled its own scale: one score above 1.0 and one below 0.0. Replayed by the test that check-worthiness is clamped rather than allowed to fail the whole article, since the score only ever decides a sort order.",
+  "json": {
+    "claims": [
+      {
+        "quote": "The last islandwide rent adjustment took effect in 2024",
+        "kind": "numeric",
+        "checkworthiness": 95.0
+      },
+      {
+        "quote": "rise by 40% from 1 January",
+        "kind": "numeric",
+        "checkworthiness": -3.0
+      }
+    ]
+  },
+  "prompt_tokens": 1043,
+  "completion_tokens": 78
+}

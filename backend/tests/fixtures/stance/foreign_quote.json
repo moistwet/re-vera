@@ -1,0 +1,24 @@
+{
+  "_note": "Passage 1 is scored on a sentence that really exists — in passage 2. A quote is only ever checked against the passage it claims to come from, so this is a fabrication like any other and passage 1 is forced to neutral.",
+  "json": {
+    "scores": [
+      {
+        "index": 1,
+        "stance": "refutes",
+        "quote": "The revised rents take effect on 1 January"
+      },
+      {
+        "index": 2,
+        "stance": "supports",
+        "quote": "The revised rents take effect on 1 January"
+      },
+      {
+        "index": 3,
+        "stance": "neutral",
+        "quote": ""
+      }
+    ]
+  },
+  "prompt_tokens": 640,
+  "completion_tokens": 94
+}

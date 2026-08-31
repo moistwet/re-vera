@@ -1,0 +1,371 @@
+{
+  "_note": "The input side of stage 5's tests: scored passages and the judgement that arrived with them, grouped into one named set per rule the aggregator has to apply. Every outlet, URL, figure, quotation and rating here is invented, like everything else under tests/fixtures/ — none of it may be presented as real reporting. Nothing in this file is fetched: stage 5 makes no network call and no model call at all, so these are simply the values retrieve/stance/judge would have handed it. Each entry carries the Passage fields plus the two ScoredPassage fields (stance, rationale_quote); every cited_span in a judgement is an exact substring of one of its set's passages unless the set's name says otherwise.",
+  "claim": {
+    "id": "c1",
+    "quote": "rise by 40% from 1 January",
+    "start": 60,
+    "end": 86,
+    "kind": "numeric",
+    "checkworthiness": 0.95
+  },
+  "article_url": "https://example-news.test/hawker-stall-rents-rise-vendors",
+  "sets": {
+    "contradicted": [
+      {
+        "text": "The median stall rent adjustment is 4 per cent from 1 January, not the 40 per cent circulating online.",
+        "url": "https://hawker-board.gov.example/releases/rent-review-2026",
+        "outlet": "Hawker Centres Board",
+        "date": "2026-03-12",
+        "wire": false,
+        "origin": "official",
+        "rating": null,
+        "stance": "refutes",
+        "rationale_quote": "median stall rent adjustment is 4 per cent"
+      },
+      {
+        "text": "The board put the median adjustment at 4 per cent, and said the 40 per cent figure was wrong.",
+        "url": "https://island-wire.test/hawker-rents-what-changed",
+        "outlet": "Island Wire",
+        "date": "2026-03-12",
+        "wire": false,
+        "origin": "web",
+        "rating": null,
+        "stance": "refutes",
+        "rationale_quote": "the 40 per cent figure was wrong"
+      },
+      {
+        "text": "The board put the median adjustment at 4 per cent, and said the 40 per cent figure was wrong.",
+        "url": "https://harbour-post.test/hawker-rents",
+        "outlet": "Harbour Post",
+        "date": "2026-03-13",
+        "wire": true,
+        "origin": "web",
+        "rating": null,
+        "stance": "refutes",
+        "rationale_quote": "the 40 per cent figure was wrong"
+      }
+    ],
+    "supported_independent": [
+      {
+        "text": "Rents were last adjusted islandwide in 2024, the board confirmed at the time.",
+        "url": "https://island-wire.test/rents-adjusted-2024",
+        "outlet": "Island Wire",
+        "date": "2024-02-14",
+        "wire": false,
+        "origin": "web",
+        "rating": null,
+        "stance": "supports",
+        "rationale_quote": "Rents were last adjusted islandwide in 2024"
+      },
+      {
+        "text": "The last islandwide adjustment to hawker rents took effect in 2024.",
+        "url": "https://harbour-daily.test/2024-rent-adjustment",
+        "outlet": "Harbour Daily",
+        "date": "2024-02-15",
+        "wire": false,
+        "origin": "web",
+        "rating": null,
+        "stance": "supports",
+        "rationale_quote": "took effect in 2024"
+      }
+    ],
+    "supported_primary": [
+      {
+        "text": "Series: islandwide hawker stall rental adjustment, last revised 2024.",
+        "url": "https://data.example.test/datasets/hawker-stall-rentals",
+        "outlet": "Hawker rentals dataset",
+        "date": "2024-04-01",
+        "wire": false,
+        "origin": "official",
+        "rating": null,
+        "stance": "supports",
+        "rationale_quote": "last revised 2024"
+      }
+    ],
+    "missing_context_small_sample": [
+      {
+        "text": "Eight in ten hawkers are considering leaving, according to a survey published this month.",
+        "url": "https://island-wire.test/hawker-survey",
+        "outlet": "Island Wire",
+        "date": "2026-06-18",
+        "wire": false,
+        "origin": "web",
+        "rating": null,
+        "stance": "supports",
+        "rationale_quote": "Eight in ten hawkers are considering leaving"
+      },
+      {
+        "text": "The survey drew 42 respondents, who were self-selected through a stallholders' mailing list.",
+        "url": "https://survey.example.test/2026-hawker-sentiment.pdf",
+        "outlet": "Hawker Sentiment Survey",
+        "date": "2026-06-05",
+        "wire": false,
+        "origin": "cited_source",
+        "rating": null,
+        "stance": "neutral",
+        "rationale_quote": "The survey drew 42 respondents"
+      }
+    ],
+    "missing_context_outdated": [
+      {
+        "text": "The scheme covers every hawker centre on the island, the operator said in 2024.",
+        "url": "https://island-wire.test/scheme-covers-every-centre",
+        "outlet": "Island Wire",
+        "date": "2024-01-10",
+        "wire": false,
+        "origin": "web",
+        "rating": null,
+        "stance": "supports",
+        "rationale_quote": "The scheme covers every hawker centre on the island"
+      },
+      {
+        "text": "Coverage was narrowed to twelve centres under this year's revision, the operator's notice says.",
+        "url": "https://harbour-daily.test/scheme-narrowed",
+        "outlet": "Harbour Daily",
+        "date": "2026-03-01",
+        "wire": false,
+        "origin": "web",
+        "rating": null,
+        "stance": "neutral",
+        "rationale_quote": "Coverage was narrowed to twelve centres"
+      }
+    ],
+    "missing_context_rating": [
+      {
+        "text": "The figure is right for one centre and wrong for the island as a whole, our review found.",
+        "url": "https://factcheck.example.test/reviews/hawker-rent-figure",
+        "outlet": "Fact Check Desk",
+        "date": "2026-04-02",
+        "wire": false,
+        "origin": "factcheck",
+        "rating": "Partly true",
+        "stance": "supports",
+        "rationale_quote": "The figure is right for one centre"
+      },
+      {
+        "text": "One centre did record the figure quoted in the article, the operator confirmed.",
+        "url": "https://island-wire.test/one-centre-recorded-figure",
+        "outlet": "Island Wire",
+        "date": "2026-04-03",
+        "wire": false,
+        "origin": "web",
+        "rating": null,
+        "stance": "supports",
+        "rationale_quote": "One centre did record the figure quoted"
+      }
+    ],
+    "wire_on_five_domains": [
+      {
+        "text": "Stall rents will rise by 40 per cent from 1 January, the agency reported on Tuesday.",
+        "url": "https://harbour-post.test/agency/hawker-rents-40",
+        "outlet": "Harbour Post",
+        "date": "2026-03-11",
+        "wire": true,
+        "origin": "web",
+        "rating": null,
+        "stance": "supports",
+        "rationale_quote": "Stall rents will rise by 40 per cent from 1 January"
+      },
+      {
+        "text": "Stall rents will rise by 40 per cent from 1 January, the agency reported on Tuesday.",
+        "url": "https://evening-signal.test/wire/hawker-rents-40",
+        "outlet": "Evening Signal",
+        "date": "2026-03-11",
+        "wire": true,
+        "origin": "web",
+        "rating": null,
+        "stance": "supports",
+        "rationale_quote": "Stall rents will rise by 40 per cent from 1 January"
+      },
+      {
+        "text": "Stall rents will rise by 40 per cent from 1 January, the agency reported on Tuesday.",
+        "url": "https://coastal-times.test/wire/hawker-rents-40",
+        "outlet": "Coastal Times",
+        "date": "2026-03-11",
+        "wire": true,
+        "origin": "web",
+        "rating": null,
+        "stance": "supports",
+        "rationale_quote": "Stall rents will rise by 40 per cent from 1 January"
+      },
+      {
+        "text": "Stall rents will rise by 40 per cent from 1 January, the agency reported on Tuesday.",
+        "url": "https://morning-ledger.test/wire/hawker-rents-40",
+        "outlet": "Morning Ledger",
+        "date": "2026-03-11",
+        "wire": true,
+        "origin": "web",
+        "rating": null,
+        "stance": "supports",
+        "rationale_quote": "Stall rents will rise by 40 per cent from 1 January"
+      },
+      {
+        "text": "Stall rents will rise by 40 per cent from 1 January, the agency reported on Tuesday.",
+        "url": "https://harbour-daily.test/wire/hawker-rents-40",
+        "outlet": "Harbour Daily",
+        "date": "2026-03-11",
+        "wire": true,
+        "origin": "web",
+        "rating": null,
+        "stance": "supports",
+        "rationale_quote": "Stall rents will rise by 40 per cent from 1 January"
+      }
+    ],
+    "conflict": [
+      {
+        "text": "The rental scheme has not been suspended and continues to operate, the board said.",
+        "url": "https://hawker-board.gov.example/releases/scheme-continues",
+        "outlet": "Hawker Centres Board",
+        "date": "2026-05-02",
+        "wire": false,
+        "origin": "official",
+        "rating": null,
+        "stance": "refutes",
+        "rationale_quote": "has not been suspended and continues to operate"
+      },
+      {
+        "text": "Officials suspended the rental scheme this month, two stallholders were told.",
+        "url": "https://island-wire.test/scheme-suspended",
+        "outlet": "Island Wire",
+        "date": "2026-05-03",
+        "wire": false,
+        "origin": "web",
+        "rating": null,
+        "stance": "supports",
+        "rationale_quote": "Officials suspended the rental scheme this month"
+      },
+      {
+        "text": "The rental scheme has been suspended, according to notices seen at two centres.",
+        "url": "https://harbour-daily.test/scheme-suspended-notices",
+        "outlet": "Harbour Daily",
+        "date": "2026-05-03",
+        "wire": false,
+        "origin": "web",
+        "rating": null,
+        "stance": "supports",
+        "rationale_quote": "The rental scheme has been suspended"
+      }
+    ],
+    "undated_and_unnamed": [
+      {
+        "text": "The board put the median adjustment at 4 per cent in its notice to stallholders.",
+        "url": "https://island-wire.test/notice-to-stallholders",
+        "outlet": "  ",
+        "date": null,
+        "wire": false,
+        "origin": "web",
+        "rating": null,
+        "stance": "refutes",
+        "rationale_quote": "the median adjustment at 4 per cent"
+      },
+      {
+        "text": "A second newsroom reported the same 4 per cent figure the following morning.",
+        "url": "https://harbour-daily.test/same-figure",
+        "outlet": "Harbour Daily",
+        "date": null,
+        "wire": false,
+        "origin": "web",
+        "rating": null,
+        "stance": "refutes",
+        "rationale_quote": "the same 4 per cent figure"
+      }
+    ],
+    "aggregator_and_self": [
+      {
+        "text": "Stall rents will rise by 40 per cent from 1 January, the agency reported on Tuesday.",
+        "url": "https://sg.news.yahoo.com/hawker-rents-40",
+        "outlet": "Yahoo News",
+        "date": "2026-03-11",
+        "wire": false,
+        "origin": "web",
+        "rating": null,
+        "stance": "supports",
+        "rationale_quote": "Stall rents will rise by 40 per cent"
+      },
+      {
+        "text": "Stall rents will rise by 40 per cent from 1 January, this article says.",
+        "url": "https://example-news.test/hawker-stall-rents-rise-vendors",
+        "outlet": "Example News",
+        "date": "2026-03-10",
+        "wire": false,
+        "origin": "web",
+        "rating": null,
+        "stance": "supports",
+        "rationale_quote": "Stall rents will rise by 40 per cent"
+      },
+      {
+        "text": "The scheme's own page lists the 40 per cent figure for one centre only.",
+        "url": "https://island-wire.test/one-centre-only",
+        "outlet": "Island Wire",
+        "date": "2026-03-12",
+        "wire": false,
+        "origin": "web",
+        "rating": null,
+        "stance": "supports",
+        "rationale_quote": "lists the 40 per cent figure for one centre only"
+      }
+    ]
+  },
+  "judgements": {
+    "contradicted": {
+      "verdict": "contradicted",
+      "confidence": "high",
+      "evidence": "The Hawker Centres Board and Island Wire put the median adjustment at 4 per cent, not 40 per cent.",
+      "cited_spans": ["median stall rent adjustment is 4 per cent"]
+    },
+    "supported_independent": {
+      "verdict": "supported",
+      "confidence": "medium",
+      "evidence": "Island Wire and Harbour Daily both date the last islandwide adjustment to 2024.",
+      "cited_spans": ["The last islandwide adjustment to hawker rents took effect in 2024."]
+    },
+    "supported_primary": {
+      "verdict": "supported",
+      "confidence": "high",
+      "evidence": "The Hawker rentals dataset records the last revision in 2024.",
+      "cited_spans": ["last revised 2024"]
+    },
+    "missing_context_small_sample": {
+      "verdict": "supported",
+      "confidence": "medium",
+      "evidence": "Island Wire reports the eight-in-ten figure from a survey published this month.",
+      "cited_spans": ["Eight in ten hawkers are considering leaving"]
+    },
+    "missing_context_outdated": {
+      "verdict": "supported",
+      "confidence": "high",
+      "evidence": "Island Wire reported in 2024 that the scheme covered every centre.",
+      "cited_spans": ["The scheme covers every hawker centre on the island"]
+    },
+    "missing_context_rating": {
+      "verdict": "supported",
+      "confidence": "high",
+      "evidence": "The Fact Check Desk and Island Wire both found the figure held for one centre.",
+      "cited_spans": ["The figure is right for one centre"]
+    },
+    "wire_on_five_domains": {
+      "verdict": "supported",
+      "confidence": "high",
+      "evidence": "Five outlets carry the 40 per cent figure.",
+      "cited_spans": ["Stall rents will rise by 40 per cent from 1 January"]
+    },
+    "conflict": {
+      "verdict": "contradicted",
+      "confidence": "high",
+      "evidence": "The Hawker Centres Board says the scheme continues to operate.",
+      "cited_spans": ["has not been suspended and continues to operate"]
+    },
+    "undated_and_unnamed": {
+      "verdict": "contradicted",
+      "confidence": "medium",
+      "evidence": "Two newsrooms put the median adjustment at 4 per cent, not 40 per cent.",
+      "cited_spans": ["the median adjustment at 4 per cent"]
+    },
+    "aggregator_and_self": {
+      "verdict": "supported",
+      "confidence": "high",
+      "evidence": "Yahoo News and this article both carry the figure.",
+      "cited_spans": ["lists the 40 per cent figure for one centre only"]
+    }
+  }
+}

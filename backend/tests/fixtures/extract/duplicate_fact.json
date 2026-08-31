@@ -1,0 +1,24 @@
+{
+  "_note": "The same fact returned twice, as overlapping spans of tests/fixtures/article.json: once as the whole sentence (characters 12-86) and once as the clause inside it (60-86). This is the shape the de-duplication pass exists for - two highlights over the same words, and two of a reader's eight claims spent on one fact. Replayed by the overlap de-duplication test.",
+  "json": {
+    "claims": [
+      {
+        "quote": "rise by 40% from 1 January",
+        "kind": "numeric",
+        "checkworthiness": 0.95
+      },
+      {
+        "quote": "Hawker stall rents across the island are set to rise by 40% from 1 January",
+        "kind": "numeric",
+        "checkworthiness": 0.9
+      },
+      {
+        "quote": "The last islandwide rent adjustment took effect in 2024",
+        "kind": "numeric",
+        "checkworthiness": 0.62
+      }
+    ]
+  },
+  "prompt_tokens": 1043,
+  "completion_tokens": 155
+}

@@ -1,0 +1,41 @@
+{
+  "_note": "FICTIONAL. An OpenAI Responses answer for the hawker-rent claim: the web_search tool ran, the message carries the JSON the prompt asked for, and every result URL appears in the url_citation annotations. Assumed shape only — see app/pipeline/providers/websearch.py.",
+  "status_code": 200,
+  "url": "https://api.openai.com/v1/responses",
+  "json": {
+    "id": "resp_fictional_0001",
+    "model": "gpt-5-mini",
+    "output": [
+      { "type": "web_search_call", "id": "ws_fictional_0001", "status": "completed" },
+      {
+        "type": "message",
+        "id": "msg_fictional_0001",
+        "role": "assistant",
+        "content": [
+          {
+            "type": "output_text",
+            "text": "{\"results\": [{\"text\": \"The median stall rental adjustment for the coming year is 4 per cent, the agency said in a written reply.\", \"url\": \"https://gov.example/press/stall-rental-adjustment\", \"outlet\": \"gov.example\", \"date\": \"2026-03-12\"}, {\"text\": \"The agency put the median adjustment at 4 per cent, well below the 40 per cent circulating online.\", \"url\": \"https://news.example/hawker-rent-adjustment\", \"outlet\": \"Example News\", \"date\": \"2026-03-13\"}, {\"text\": \"Stallholders at three centres said they had been told of an increase at a briefing last month.\", \"url\": \"https://daily.example/hawkers-briefing\", \"outlet\": \"Example Daily\", \"date\": null}]}",
+            "annotations": [
+              {
+                "type": "url_citation",
+                "url": "https://gov.example/press/stall-rental-adjustment",
+                "title": "Stall rental adjustment for 2027"
+              },
+              {
+                "type": "url_citation",
+                "url": "https://news.example/hawker-rent-adjustment",
+                "title": "Agency puts median stall rent adjustment at 4%"
+              },
+              {
+                "type": "url_citation",
+                "url": "https://daily.example/hawkers-briefing",
+                "title": "Hawkers told of increase at briefing"
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "usage": { "input_tokens": 812, "output_tokens": 143 }
+  }
+}

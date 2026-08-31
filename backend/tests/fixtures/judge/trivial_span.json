@@ -1,0 +1,13 @@
+{
+  "_note": "A verdict cited on `4 per cent` — ten characters, genuinely present in passage 1, and short enough to prove nothing. Under MIN_CITED_SPAN_CHARS, so the claim is downgraded.",
+  "json": {
+    "verdict": "contradicted",
+    "confidence": "high",
+    "evidence": "Island Wire puts the figure at 4 per cent.",
+    "cited_spans": [
+      "4 per cent"
+    ]
+  },
+  "prompt_tokens": 744,
+  "completion_tokens": 72
+}

@@ -1,0 +1,24 @@
+{
+  "_note": "Stage 3's happy path against passages.json: a refutation, a support and a genuine neutral, in order. Passage 1's quote uses a straight apostrophe where the passage has a curly one — a difference verification is meant to forgive. Hand-written, never captured from a live API.",
+  "json": {
+    "scores": [
+      {
+        "index": 1,
+        "stance": "refutes",
+        "quote": "The board's release put the median stall rent adjustment at 4 per cent from 1 January"
+      },
+      {
+        "index": 2,
+        "stance": "supports",
+        "quote": "The revised rents take effect on 1 January"
+      },
+      {
+        "index": 3,
+        "stance": "neutral",
+        "quote": ""
+      }
+    ]
+  },
+  "prompt_tokens": 640,
+  "completion_tokens": 96
+}

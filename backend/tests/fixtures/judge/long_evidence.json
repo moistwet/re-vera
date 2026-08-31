@@ -1,0 +1,13 @@
+{
+  "_note": "A decided verdict whose `evidence` runs to several hundred characters — not the one plain sentence rule 2 asks for, and the shape a successful injection takes when a passage's own paragraphs are reproduced into the reader-facing sentence.",
+  "json": {
+    "verdict": "contradicted",
+    "confidence": "high",
+    "evidence": "According to the release circulated by the board and summarised by Island Wire, the median stall rent adjustment across the island's hawker centres has been set at four per cent with effect from 1 January, a figure which differs materially from the forty per cent reported by the vendors quoted in this article, and stallholders were separately notified of the change by letter in November of the preceding year, according to the same release.",
+    "cited_spans": [
+      "The board's release put the median stall rent adjustment\nat 4 per cent from 1 January"
+    ]
+  },
+  "prompt_tokens": 744,
+  "completion_tokens": 210
+}

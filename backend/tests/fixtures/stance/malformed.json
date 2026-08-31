@@ -1,0 +1,6 @@
+{
+  "_note": "Not JSON at all — a model that answered in prose. Surfaces from LLMClient as LLMInvalidOutput, which stage 3 turns into an all-neutral result rather than an exception.",
+  "content": "I looked at the passages and I think the first one disagrees with the claim.",
+  "prompt_tokens": 640,
+  "completion_tokens": 21
+}

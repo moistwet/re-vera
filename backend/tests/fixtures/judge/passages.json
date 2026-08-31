@@ -1,0 +1,52 @@
+{
+  "_note": "The input side of stage 4's tests: one fictional claim from ../article.json (the hawker-rents article) and the three scored passages stage 3 would hand it. Every outlet, URL, figure and quotation here is invented. Passage 1 deliberately uses a curly apostrophe where the recordings quote a straight one, and the recordings break a line inside a quote, so the happy path also proves verification forgives typography and whitespace and nothing else.",
+  "claim": {
+    "id": "c1",
+    "quote": "rise by 40% from 1 January",
+    "start": 60,
+    "end": 86,
+    "kind": "numeric",
+    "checkworthiness": 0.95
+  },
+  "scored": [
+    {
+      "stance": "refutes",
+      "rationale_quote": "the median stall rent adjustment at 4 per cent",
+      "passage": {
+        "text": "The board’s release put the median stall rent adjustment at 4 per cent from 1 January, not the 40 per cent circulating online.",
+        "url": "https://example-news.test/hawker-rents-what-changed",
+        "outlet": "Island Wire",
+        "date": "2026-03-12",
+        "wire": false,
+        "origin": "web",
+        "rating": null
+      }
+    },
+    {
+      "stance": "supports",
+      "rationale_quote": "The revised rents take effect on 1 January",
+      "passage": {
+        "text": "The revised rents take effect on 1 January, the board said in its release. Stallholders were notified by letter in November.",
+        "url": "https://data.example.test/releases/hawker-rent-review",
+        "outlet": "Hawker Centres Board",
+        "date": "2026-03-11",
+        "wire": false,
+        "origin": "official",
+        "rating": null
+      }
+    },
+    {
+      "stance": "neutral",
+      "rationale_quote": "",
+      "passage": {
+        "text": "Hawker centres in Singapore are run under a mix of public and private management models, a distinction that rarely surfaces in coverage of rents.",
+        "url": "https://example-explainer.test/how-hawker-centres-are-run",
+        "outlet": "Kopitiam Daily",
+        "date": null,
+        "wire": false,
+        "origin": "web",
+        "rating": null
+      }
+    }
+  ]
+}

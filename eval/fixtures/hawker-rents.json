@@ -1,0 +1,154 @@
+{
+  "_fictional": "FICTIONAL RECORDINGS, HAND-WRITTEN, NEVER CAPTURED. This repository has no OPENAI_API_KEY, no GOOGLE_FACTCHECK_API_KEY and no route to either service, so nothing here was recorded from a live API. Each entry is what a plausible provider or model answer would look like for one claim of the fictional golden set — evidence for testing Re-Vera's rules, not evidence about the world, and not evidence that any real model returns these answers. Every outlet, URL, figure and quotation is invented. See eval/fixtures/README.md.",
+  "claims": {
+    "hawker-01": {
+      "web": [
+        {
+          "outlet": "Island Wire",
+          "url": "https://island-wire.example/hawker-rents-what-changed",
+          "date": "2026-03-12",
+          "stance": "refutes",
+          "quote": "the 40 per cent figure circulating on social media was wrong",
+          "text": "The board put the median adjustment at 4 per cent from 1 January, and said the 40 per cent figure circulating on social media was wrong."
+        }
+      ],
+      "official": [
+        {
+          "outlet": "Hawker Centres Board",
+          "url": "https://data.gov.example/datasets/hawker-rental-review-2026",
+          "date": "2026-03-12",
+          "stance": "refutes",
+          "quote": "the median stall rent adjustment at 4 per cent from 1 January",
+          "text": "The Hawker Centres Board rental review sets the median stall rent adjustment at 4 per cent from 1 January, and caps any single increase at 8 per cent."
+        }
+      ],
+      "judge": {
+        "verdict": "contradicted",
+        "confidence": "high",
+        "evidence": "The Hawker Centres Board release and Island Wire both put the median adjustment at 4 per cent from 1 January, not 40 per cent.",
+        "cited_spans": [
+          "the median stall rent adjustment at 4 per cent from 1 January",
+          "the 40 per cent figure circulating on social media was wrong"
+        ]
+      }
+    },
+    "hawker-02": {},
+    "hawker-03": {
+      "web": [
+        {
+          "outlet": "Harbour Post",
+          "url": "https://harbour-post.example/rents-adjusted-2024",
+          "date": "2024-02-14",
+          "stance": "supports",
+          "quote": "Hawker rents were last adjusted islandwide in 2024",
+          "text": "Hawker rents were last adjusted islandwide in 2024, when the board raised the median stall rent by 3 per cent."
+        },
+        {
+          "outlet": "Kopitiam Daily",
+          "url": "https://kopitiam-daily.example/2024-rent-adjustment",
+          "date": "2024-02-15",
+          "stance": "supports",
+          "quote": "The 2024 exercise was the last islandwide adjustment to hawker stall rents",
+          "text": "The 2024 exercise was the last islandwide adjustment to hawker stall rents; no change followed in 2025."
+        }
+      ],
+      "judge": {
+        "verdict": "supported",
+        "confidence": "high",
+        "evidence": "Harbour Post and Kopitiam Daily both report the last islandwide adjustment taking effect in 2024.",
+        "cited_spans": [
+          "Hawker rents were last adjusted islandwide in 2024",
+          "The 2024 exercise was the last islandwide adjustment to hawker stall rents"
+        ]
+      }
+    },
+    "hawker-04": {
+      "web": [
+        {
+          "outlet": "Straits Beacon",
+          "url": "https://straits-beacon.example/hawker-survey-eight-in-ten",
+          "date": "2026-06-18",
+          "stance": "supports",
+          "quote": "Eight in ten hawkers are considering leaving the trade",
+          "text": "Eight in ten hawkers are considering leaving the trade, according to a sentiment survey published this month."
+        },
+        {
+          "outlet": "Hawker Sentiment Survey",
+          "url": "https://survey-archive.example/2026-hawker-sentiment.pdf",
+          "date": "2026-06-05",
+          "stance": "neutral",
+          "quote": "The 2026 hawker sentiment survey drew 42 respondents",
+          "text": "The 2026 hawker sentiment survey drew 42 respondents recruited through a stallholder chat group. The organisers describe the sample as self-selected and not representative of the trade."
+        }
+      ],
+      "judge": {
+        "verdict": "supported",
+        "confidence": "medium",
+        "evidence": "Straits Beacon reports the eight-in-ten figure from a 2026 sentiment survey.",
+        "cited_spans": [
+          "Eight in ten hawkers are considering leaving the trade"
+        ]
+      }
+    },
+    "hawker-05": {
+      "cited": [
+        {
+          "outlet": "Official transcript",
+          "url": "https://transcripts.gov.example/hawker-rental-doorstop",
+          "date": "2026-03-10",
+          "stance": "refutes",
+          "quote": "Caps are one of the options being reviewed",
+          "text": "Asked whether rents would be capped, the spokesperson said: “Caps are one of the options being reviewed, and we will say more in due course.” Nothing was ruled out at any point in the doorstop."
+        }
+      ],
+      "judge": {
+        "verdict": "contradicted",
+        "confidence": "high",
+        "evidence": "The official transcript has the spokesperson calling caps one of the options being reviewed, not ruling them out.",
+        "cited_spans": [
+          "Caps are one of the options being reviewed"
+        ]
+      }
+    },
+    "hawker-06": {
+      "web": [
+        {
+          "outlet": "Hawker Centres Board",
+          "url": "https://hawker-board.gov.example/releases/rental-review-2026",
+          "date": "2026-03-12",
+          "stance": "supports",
+          "quote": "The revised rents take effect on 1 January",
+          "text": "The revised rents take effect on 1 January. Stallholders were notified by letter in November."
+        }
+      ],
+      "judge": {
+        "verdict": "supported",
+        "confidence": "high",
+        "evidence": "The Hawker Centres Board release states the revised rents take effect on 1 January.",
+        "cited_spans": [
+          "The revised rents take effect on 1 January"
+        ]
+      }
+    },
+    "hawker-07": {
+      "web": [
+        {
+          "outlet": "Hawker Centres Board",
+          "url": "https://hawker-board.gov.example/releases/adjustment-history",
+          "date": "2026-03-12",
+          "stance": "refutes",
+          "quote": "The previous islandwide adjustment took effect in 2024",
+          "text": "The previous islandwide adjustment took effect in 2024, five years after the 2019 exercise the article refers to."
+        }
+      ],
+      "judge": {
+        "verdict": "contradicted",
+        "confidence": "high",
+        "evidence": "The Hawker Centres Board history page records an islandwide adjustment in 2024.",
+        "cited_spans": [
+          "since 2024"
+        ]
+      }
+    }
+  }
+}

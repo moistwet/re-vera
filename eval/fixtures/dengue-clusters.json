@@ -1,0 +1,103 @@
+{
+  "_fictional": "FICTIONAL RECORDINGS, HAND-WRITTEN, NEVER CAPTURED. This repository has no OPENAI_API_KEY, no GOOGLE_FACTCHECK_API_KEY and no route to either service, so nothing here was recorded from a live API. Each entry is what a plausible provider or model answer would look like for one claim of the fictional golden set — evidence for testing Re-Vera's rules, not evidence about the world, and not evidence that any real model returns these answers. Every outlet, URL, figure and quotation is invented. See eval/fixtures/README.md.",
+  "claims": {
+    "dengue-01": {
+      "official": [
+        {
+          "outlet": "Health Data Portal",
+          "url": "https://data.gov.example/datasets/dengue-weekly-cases",
+          "date": "2026-06-30",
+          "stance": "refutes",
+          "quote": "Weekly dengue notifications rose 18 per cent between January and June 2026",
+          "text": "Weekly dengue notifications rose 18 per cent between January and June 2026, from 214 to 253 cases a week."
+        }
+      ],
+      "judge": {
+        "verdict": "contradicted",
+        "confidence": "high",
+        "evidence": "The Health Data Portal records an 18 per cent rise in weekly notifications, not a tripling.",
+        "cited_spans": [
+          "Weekly dengue notifications rose 18 per cent between January and June 2026"
+        ]
+      }
+    },
+    "dengue-02": {
+      "web": [
+        {
+          "outlet": "Environment Agency",
+          "url": "https://environment.gov.example/dengue/clusters",
+          "date": "2026-07-01",
+          "stance": "supports",
+          "quote": "There are 40 active dengue clusters as of this week",
+          "text": "There are 40 active dengue clusters as of this week, nine of them in the red high-risk band."
+        }
+      ],
+      "judge": {
+        "verdict": "supported",
+        "confidence": "high",
+        "evidence": "The Environment Agency cluster page lists 40 active clusters this week.",
+        "cited_spans": [
+          "There are 40 active dengue clusters as of this week"
+        ]
+      }
+    },
+    "dengue-03": {
+      "web": [
+        {
+          "outlet": "Harbour Post",
+          "url": "https://harbour-post.example/stagnant-water-one-in-three",
+          "date": "2026-06-20",
+          "stance": "supports",
+          "quote": "One in three households inspected had stagnant water on the premises",
+          "text": "One in three households inspected had stagnant water on the premises, a neighbourhood inspection round reported."
+        },
+        {
+          "outlet": "Inspection round summary",
+          "url": "https://survey-archive.example/estate-inspection-round.pdf",
+          "date": "2026-06-19",
+          "stance": "neutral",
+          "quote": "55 households were surveyed across a single estate",
+          "text": "55 households were surveyed across a single estate over two evenings. The summary notes the round was not representative of the wider town."
+        }
+      ],
+      "judge": {
+        "verdict": "missing_context",
+        "confidence": "medium",
+        "evidence": "Harbour Post reports the one-in-three figure, which the inspection round summary draws from a single estate.",
+        "cited_spans": [
+          "One in three households inspected had stagnant water on the premises"
+        ]
+      }
+    },
+    "dengue-04": {},
+    "dengue-05": {
+      "web": [
+        {
+          "outlet": "Environment Agency",
+          "url": "https://environment.gov.example/dengue/seasonality",
+          "date": "2026-05-04",
+          "stance": "supports",
+          "quote": "Dengue transmission usually peaks between June and October",
+          "text": "Dengue transmission usually peaks between June and October, when warmer weather shortens the mosquito breeding cycle."
+        },
+        {
+          "outlet": "Island Wire",
+          "url": "https://island-wire.example/dengue-season-explainer",
+          "date": "2026-05-06",
+          "stance": "supports",
+          "quote": "The peak dengue season runs from June to October each year",
+          "text": "The peak dengue season runs from June to October each year, health authorities have said repeatedly."
+        }
+      ],
+      "judge": {
+        "verdict": "supported",
+        "confidence": "high",
+        "evidence": "The Environment Agency and Island Wire both put the dengue peak between June and October.",
+        "cited_spans": [
+          "Dengue transmission usually peaks between June and October",
+          "The peak dengue season runs from June to October each year"
+        ]
+      }
+    }
+  }
+}

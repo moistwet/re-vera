@@ -1,0 +1,14 @@
+{
+  "_note": "One real span from passage 1 and one invented one. All-or-nothing verification: quoting something real does not buy the right to invent the rest.",
+  "json": {
+    "verdict": "supported",
+    "confidence": "medium",
+    "evidence": "Island Wire and the board both confirm the figure.",
+    "cited_spans": [
+      "The board's release put the median stall rent adjustment\nat 4 per cent from 1 January",
+      "and the 40 per cent figure was confirmed by the board"
+    ]
+  },
+  "prompt_tokens": 744,
+  "completion_tokens": 112
+}

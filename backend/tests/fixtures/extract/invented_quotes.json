@@ -1,0 +1,29 @@
+{
+  "_note": "A model that paraphrased. Two of these four quotes are exact substrings of tests/fixtures/article.json; the other two are re-tellings that never appear in it, one a summary and one a single word changed. Replayed by the test that a quote which is not a substring is dropped rather than repaired.",
+  "json": {
+    "claims": [
+      {
+        "quote": "rise by 40% from 1 January",
+        "kind": "numeric",
+        "checkworthiness": 0.95
+      },
+      {
+        "quote": "rents will rise by forty per cent in the new year",
+        "kind": "numeric",
+        "checkworthiness": 0.93
+      },
+      {
+        "quote": "More than 200 stalls have already shut this year",
+        "kind": "numeric",
+        "checkworthiness": 0.9
+      },
+      {
+        "quote": "The last islandwide rent adjustment took effect in 2024",
+        "kind": "numeric",
+        "checkworthiness": 0.62
+      }
+    ]
+  },
+  "prompt_tokens": 1043,
+  "completion_tokens": 141
+}

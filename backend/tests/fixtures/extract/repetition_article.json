@@ -1,0 +1,6 @@
+{
+  "_fictional": "FICTIONAL TEST DATA. A short invented article that states one fact three times: twice word for word, and once more differing only by the capital letter that starts a sentence. Written so that stage 1's handling of a quote occurring more than once, and its de-duplication of near-identical claims, can both be tested. Never present it as real reporting.",
+  "url": "https://example.com/re-vera-fixture/fictional-news/rents-rose-four-per-cent",
+  "title": "Rents rose 4% in 2024, review finds",
+  "text": "Rents rose by 4% in 2024, a review published this week found.\n\nThe review covered every centre on the island. Rents rose by 4% in 2024, it said, and the increase was spread evenly across the year.\n\nA spokesperson later confirmed that rents rose by 4% in 2024, and said no further change is planned."
+}

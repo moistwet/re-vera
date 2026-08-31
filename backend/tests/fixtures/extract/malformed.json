@@ -1,0 +1,6 @@
+{
+  "_note": "Not JSON at all - the `content` form, which the `json` form cannot express. Stands for every way a structured answer can come back unusable (a refusal, a reply cut off by the token limit, prose where an object was asked for). Replayed by the test that stage 1 returns [] instead of raising.",
+  "content": "I'm sorry, I can't help with that. {\"claims\": [",
+  "prompt_tokens": 1043,
+  "completion_tokens": 17
+}

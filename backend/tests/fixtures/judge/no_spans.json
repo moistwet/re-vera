@@ -1,0 +1,11 @@
+{
+  "_note": "A decided verdict that cites nothing at all. Nothing was fabricated and nothing can be checked either, which is the same thing to a reader.",
+  "json": {
+    "verdict": "supported",
+    "confidence": "medium",
+    "evidence": "The passages support the claim.",
+    "cited_spans": []
+  },
+  "prompt_tokens": 744,
+  "completion_tokens": 64
+}

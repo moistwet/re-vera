@@ -1,0 +1,19 @@
+{
+  "_note": "A short answer: three passages were sent and only passages 2 and 3 come back, with passage 1 missing. Read positionally, passage 1 would inherit passage 2's stance. The indices are the only thing that says otherwise, which is why they are the only thing read.",
+  "json": {
+    "scores": [
+      {
+        "index": 2,
+        "stance": "supports",
+        "quote": "The revised rents take effect on 1 January"
+      },
+      {
+        "index": 3,
+        "stance": "neutral",
+        "quote": "Hawker centres in Singapore are run under a mix of public and private management models"
+      }
+    ]
+  },
+  "prompt_tokens": 640,
+  "completion_tokens": 72
+}

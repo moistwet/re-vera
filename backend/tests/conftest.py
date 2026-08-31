@@ -108,17 +108,33 @@ def build_settings(**overrides: Any) -> Settings:
     so a developer's local settings can never decide whether a test passes.
     ``_env_file`` is a pydantic-settings runtime keyword that its type stubs do
     not declare, hence the one narrow ignore.
+
+    Nothing is defaulted here on the caller's behalf, so every field keeps the
+    production default ``app/config.py`` gives it — including
+    ``use_mock_pipeline=False``. A test that drives ``POST /check`` and expects
+    the six fictional fixture claims must therefore ask for the mock explicitly
+    (``use_mock_pipeline=True``); since milestone 2 the route otherwise chooses
+    the real five-stage pipeline, which needs an ``OPENAI_API_KEY`` this
+    repository does not have.
     """
     return Settings(_env_file=None, **overrides)  # type: ignore[call-arg]
 
 
 @pytest.fixture
 def settings() -> Settings:
-    """Deterministic settings for the app fixtures."""
+    """Deterministic settings for the app fixtures.
+
+    ``use_mock_pipeline`` is on: these fixtures back the milestone-1 end-to-end
+    tests, which assert the six fictional fixture claims, and the real pipeline
+    would need a key and a network neither this repository nor CI has.
+    ``tests/test_pipeline_run.py`` builds its own settings to exercise the real
+    one, with every outbound call faked.
+    """
     return build_settings(
         daily_cap=TEST_DAILY_CAP,
         max_claims=TEST_MAX_CLAIMS,
         mock_step_delay=0.0,
+        use_mock_pipeline=True,
     )
 
 

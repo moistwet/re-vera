@@ -1,0 +1,13 @@
+{
+  "_note": "The single most important failure this stage catches: a confident `supported` resting on a sentence that appears in none of the passages. Replayed by the fabricated-citation test.",
+  "json": {
+    "verdict": "supported",
+    "confidence": "high",
+    "evidence": "CNA and Reuters confirm the 40 per cent increase from 1 January.",
+    "cited_spans": [
+      "The board has confirmed a 40 per cent increase from 1 January."
+    ]
+  },
+  "prompt_tokens": 744,
+  "completion_tokens": 104
+}

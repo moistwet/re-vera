@@ -1,0 +1,28 @@
+{
+  "_note": "FICTIONAL. A data.gov.sg package_search answer with two datasets. The second names no url, so the provider must build one from its name; both are invented and neither exists.",
+  "status_code": 200,
+  "url": "https://data.gov.sg/api/action/package_search",
+  "json": {
+    "success": true,
+    "result": {
+      "count": 2,
+      "results": [
+        {
+          "name": "hawker-centre-stall-rentals",
+          "title": "Hawker Centre Stall Rentals",
+          "notes": "Median monthly stall rental by hawker centre, updated quarterly.",
+          "metadata_modified": "2026-02-01T08:00:00.000Z",
+          "organization": { "title": "Example Environment Agency", "name": "example-agency" },
+          "url": "https://data.gov.sg/datasets/hawker-centre-stall-rentals"
+        },
+        {
+          "name": "hawker-stall-vacancies",
+          "title": "Hawker Stall Vacancies",
+          "notes": "Vacant stalls by hawker centre at the end of each quarter.",
+          "metadata_modified": "2026-01-15T08:00:00.000Z",
+          "organization": { "title": "Example Environment Agency", "name": "example-agency" }
+        }
+      ]
+    }
+  }
+}

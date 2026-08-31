@@ -1,0 +1,112 @@
+{
+  "_fictional": "FICTIONAL RECORDINGS, HAND-WRITTEN, NEVER CAPTURED. This repository has no OPENAI_API_KEY, no GOOGLE_FACTCHECK_API_KEY and no route to either service, so nothing here was recorded from a live API. Each entry is what a plausible provider or model answer would look like for one claim of the fictional golden set — evidence for testing Re-Vera's rules, not evidence about the world, and not evidence that any real model returns these answers. Every outlet, URL, figure and quotation is invented. See eval/fixtures/README.md.",
+  "claims": {
+    "otter-01": {
+      "web": [
+        {
+          "outlet": "Harbour Post",
+          "url": "https://harbour-post.example/otter-count-200",
+          "date": "2026-04-02",
+          "stance": "supports",
+          "quote": "The national otter count has reached about 200 animals",
+          "text": "The national otter count has reached about 200 animals, an agency spokesperson said, up from roughly 170 at the last census."
+        },
+        {
+          "outlet": "Kopitiam Daily",
+          "url": "https://kopitiam-daily.example/otters-200",
+          "date": "2026-04-02",
+          "stance": "supports",
+          "quote": "The national otter count has reached about 200 animals",
+          "text": "The national otter count has reached about 200 animals, an agency spokesperson said, up from roughly 170 at the last census."
+        },
+        {
+          "outlet": "Straits Beacon",
+          "url": "https://straits-beacon.example/otter-census-200",
+          "date": "2026-04-03",
+          "stance": "supports",
+          "quote": "The national otter count has reached about 200 animals",
+          "text": "The national otter count has reached about 200 animals, an agency spokesperson said, up from roughly 170 at the last census."
+        }
+      ],
+      "judge": {
+        "verdict": "supported",
+        "confidence": "medium",
+        "evidence": "Harbour Post, Kopitiam Daily and Straits Beacon all report a count of about 200 otters.",
+        "cited_spans": [
+          "The national otter count has reached about 200 animals"
+        ]
+      }
+    },
+    "otter-02": {
+      "factcheck": [
+        {
+          "outlet": "Checkpoint SG",
+          "url": "https://checkpoint-sg.example/reviews/otter-fish-farm-losses",
+          "date": "2026-05-11",
+          "rating": "False",
+          "stance": "refutes",
+          "quote": "Fish-farm operators reported $180,000 in otter-related losses last year",
+          "text": "Checkpoint SG rated this claim False. Fish-farm operators reported $180,000 in otter-related losses last year, and the $2 million figure appears to originate in a mistyped social media post."
+        }
+      ],
+      "web": [
+        {
+          "outlet": "Harbour Post",
+          "url": "https://harbour-post.example/otters-fish-farms",
+          "date": "2026-05-09",
+          "stance": "neutral",
+          "quote": "nobody has put a national figure on the losses",
+          "text": "Fish farmers say otters are a growing nuisance, though nobody has put a national figure on the losses."
+        }
+      ],
+      "judge": {
+        "verdict": "contradicted",
+        "confidence": "high",
+        "evidence": "Checkpoint SG puts otter-related fish-farm losses at $180,000, not $2 million.",
+        "cited_spans": [
+          "Fish-farm operators reported $180,000 in otter-related losses last year"
+        ]
+      }
+    },
+    "otter-03": {
+      "cited": [
+        {
+          "outlet": "Parks board transcript",
+          "url": "https://transcripts.gov.example/otter-management-briefing",
+          "date": "2026-04-15",
+          "stance": "refutes",
+          "quote": "Culling is not on the table and would not work anyway",
+          "text": "The ranger said: “Culling is not on the table and would not work anyway; the answer is managing waste and fencing ponds.”"
+        }
+      ],
+      "judge": {
+        "verdict": "contradicted",
+        "confidence": "high",
+        "evidence": "The parks board transcript has the ranger saying culling is not on the table.",
+        "cited_spans": [
+          "Culling is not on the table and would not work anyway"
+        ]
+      }
+    },
+    "otter-04": {
+      "web": [
+        {
+          "outlet": "Parks Board",
+          "url": "https://parks.gov.example/wildlife/protected-species",
+          "date": "2026-01-05",
+          "stance": "supports",
+          "quote": "Smooth-coated otters are protected under the Wildlife Act",
+          "text": "Smooth-coated otters are protected under the Wildlife Act, and it is an offence to harm, trap or feed them."
+        }
+      ],
+      "judge": {
+        "verdict": "supported",
+        "confidence": "high",
+        "evidence": "The Parks Board species page states smooth-coated otters are protected under the Wildlife Act.",
+        "cited_spans": [
+          "Smooth-coated otters are protected under the Wildlife Act"
+        ]
+      }
+    }
+  }
+}

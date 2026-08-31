@@ -1,0 +1,118 @@
+# Re-Vera — backend suite, harness suite, lint, types, and the offline eval gate.
+#
+# This workflow NEVER needs an API key and NEVER calls OpenAI or Google. The eval
+# runs in its default `--offline` mode, which replays the hand-written recordings
+# in eval/fixtures and arms a process-wide socket guard for the duration of the
+# run, so an accidental outbound call fails the job rather than quietly costing
+# money. The two key variables are pinned empty below to say so out loud: nothing
+# here should read one, and if something starts to, it should fail here first.
+#
+# The gate is `precision on contradicted >= 0.90` (CLAUDE.md). run_eval.py exits
+# non-zero when it fails, which fails this job. With ~30 golden claims that gate
+# swings on single errors — it is directional, not a statistical guarantee, and
+# the printed confusion matrix is the part a human should actually read.
+#
+# Triggered by the paths CLAUDE.md names (prompts and pipeline) plus the harness
+# itself and its dependency pins: a change to eval/ decides what "better" means,
+# so it has to be tested by the same job it configures. The rest of backend/app
+# is in the list because run_eval.py imports app.llm, app.config, app.invariants
+# and app.schema_models: a rename in any of them breaks the harness, and a gate
+# that stops running is worse than a gate that fails.
+#
+# The two path lists below are duplicated on purpose. GitHub Actions has accepted
+# YAML anchors only since September 2025 and still rejects merge keys, and much
+# of the surrounding tooling (editor extensions, third-party linters) has not
+# caught up. A workflow file that fails to parse does not fail a build — it
+# simply never runs — which is the one failure mode a safety gate must not have,
+# so six repeated lines buy more than they cost.
+
+name: eval
+
+on:
+  push:
+    paths:
+      - "backend/app/**"
+      - "backend/tests/**"
+      - "backend/pyproject.toml"
+      - "backend/uv.lock"
+      - "eval/**"
+      - ".github/workflows/eval.yml"
+  pull_request:
+    paths:
+      - "backend/app/**"
+      - "backend/tests/**"
+      - "backend/pyproject.toml"
+      - "backend/uv.lock"
+      - "eval/**"
+      - ".github/workflows/eval.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: eval-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Deliberately empty. Offline mode builds its Settings with `_env_file=None`
+  # and never asks for a key; these make an accidental live path fail loudly
+  # instead of picking up a secret that happened to be in scope.
+  OPENAI_API_KEY: ""
+  GOOGLE_FACTCHECK_API_KEY: ""
+
+jobs:
+  eval:
+    name: offline eval + gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+
+      - name: Install Python 3.12
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        # The dev tools live in an extra, so a bare `uv sync` would not install
+        # pytest, ruff or mypy. fakeredis[lua] comes with it and is not optional:
+        # app/events.py publishes through a Lua script.
+        run: uv sync --extra dev
+
+      - name: Backend test suite
+        run: uv run pytest
+
+      - name: Harness test suite
+        # The metrics are the part most likely to be quietly wrong, so the
+        # harness is tested before it is believed.
+        run: uv run pytest ../eval/tests
+
+      - name: Lint
+        # Run from backend/ so eval/ inherits backend/pyproject.toml's ruff
+        # configuration: ruff falls back to the working directory's config for
+        # files with no config of their own, and eval/ has none by design.
+        run: uv run ruff check . ../eval
+
+      - name: Types
+        run: uv run mypy app ../eval/run_eval.py ../eval/tests/test_run_eval.py
+
+      - name: Offline eval (gate — precision on contradicted >= 0.90)
+        run: uv run python ../eval/run_eval.py --offline --json-out ../eval-summary.json
+
+      - name: Upload the eval summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-summary
+          path: eval-summary.json
+          if-no-files-found: warn

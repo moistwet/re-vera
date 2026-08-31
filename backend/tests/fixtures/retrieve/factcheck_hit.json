@@ -1,0 +1,38 @@
+{
+  "_note": "FICTIONAL. A Google Fact Check Tools claims:search answer for the hawker-rent claim in tests/fixtures/article.json. Two claim entries: the first carries a usable review, the second carries a review with no textualRating, which the provider must skip.",
+  "status_code": 200,
+  "url": "https://factchecktools.googleapis.com/v1alpha1/claims:search",
+  "json": {
+    "claims": [
+      {
+        "text": "Hawker stall rents across Singapore will rise by 40% from 1 January.",
+        "claimant": "posts circulating on messaging apps",
+        "claimDate": "2026-03-01T00:00:00Z",
+        "claimReview": [
+          {
+            "publisher": { "name": "Example Fact Check SG", "site": "factcheck.example" },
+            "url": "https://factcheck.example/hawker-stall-rents-40-percent",
+            "title": "No, hawker stall rents are not rising 40% next year",
+            "reviewDate": "2026-03-12T09:00:00Z",
+            "textualRating": "False",
+            "languageCode": "en"
+          }
+        ]
+      },
+      {
+        "text": "More than 200 hawker stalls closed this year.",
+        "claimant": "vendors",
+        "claimDate": "2026-02-20T00:00:00Z",
+        "claimReview": [
+          {
+            "publisher": { "name": "Example Fact Check SG", "site": "factcheck.example" },
+            "url": "https://factcheck.example/stall-closures",
+            "title": "What we know about stall closures",
+            "reviewDate": "2026-02-25T09:00:00Z",
+            "languageCode": "en"
+          }
+        ]
+      }
+    ]
+  }
+}

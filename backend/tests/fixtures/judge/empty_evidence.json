@@ -1,0 +1,13 @@
+{
+  "_note": "A decided verdict with no evidence sentence. Rule 2 requires one, so there is nothing to show the reader and the verdict cannot stand.",
+  "json": {
+    "verdict": "contradicted",
+    "confidence": "high",
+    "evidence": "   ",
+    "cited_spans": [
+      "The board's release put the median stall rent adjustment\nat 4 per cent from 1 January"
+    ]
+  },
+  "prompt_tokens": 744,
+  "completion_tokens": 80
+}

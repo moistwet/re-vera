@@ -1,0 +1,6 @@
+{
+  "_note": "Prose instead of JSON, in the `content` form: what a model does when it answers the question in words. Surfaces as LLMInvalidOutput.",
+  "content": "I looked at the three passages and, on balance, the claim seems overstated.",
+  "prompt_tokens": 744,
+  "completion_tokens": 22
+}
