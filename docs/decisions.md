@@ -52,3 +52,22 @@ design files, this log and `CLAUDE.md` win.
 14. **Motion:** fluid/cool animations are wanted but polish is deferred to
     milestone 5. Reduced-motion is wired correctly from the start, including a
     JS `matchMedia` check for rAF-driven animation (the demo only covers CSS).
+
+## 2026-08-31 — post-review fixes
+
+15. **`claims_found` carries `claim_ids`, in article order.** The event grows
+    from `{type, count}` to `{type, count, claim_ids}`, where `claim_ids` lists
+    every `Claim.id` the job will send, ascending by the claim's `start`
+    offset; `count` stays and always equals `claim_ids.length`.
+    Why: claims resolve out of article order on purpose — the mock pipeline's
+    `RESOLVE_ORDER` streams rows 3, 1, 6, 4, 2, 5, which is the demo's
+    signature scattered fill (`design-handoff.md` §1 state C) — but a cache
+    replay hands back the same claims in article order. A popup that filled
+    rows by arrival therefore rendered one article two different ways
+    depending on the cache, and it could not do better on its own: when the
+    first claim lands it has no way to know which row that claim belongs in.
+    Sending the ids up front lets a client allocate all six rows before any
+    claim arrives and fill each row when its own claim lands, so the live path
+    and the cached path render identically and each row is written exactly
+    once. No other type changed; both bindings were regenerated from
+    `shared/schema.json`.
