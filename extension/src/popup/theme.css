@@ -1,0 +1,431 @@
+/**
+ * Re-Vera popup theme.
+ *
+ * Every colour, size, weight and radius here comes from the token table in
+ * docs/design-handoff.md. Milestone 1 ships the light theme only: the tokens
+ * are declared once, on `:root` and on `.rv-theme-light` together, so adding
+ * dark mode later is a matter of writing a `.rv-theme-dark` block and swapping
+ * the class on the wrapper in App.tsx — no component touches a literal colour.
+ * (The wrapper's block will cover its own subtree; `body` sits outside it, so
+ * give `body` the dark surface at the same time.)
+ *
+ * Fonts: the system UI stack. The design calls for Cabin + IBM Plex Sans, and
+ * the popup is an extension page so webfonts would be allowed here, but they
+ * are neither fetched (a fonts.googleapis.com <link> is offline-hostile and
+ * leaks every popup open to Google) nor bundled (no binary assets in M1). The
+ * families are still named first in the stack, so a machine that happens to
+ * have them installed renders the intended type; everything else falls back to
+ * the system stack.
+ */
+
+:root,
+.rv-theme-light {
+  /* Base — docs/design-handoff.md § Design tokens */
+  --s-surface: #f7f9f8;
+  --s-card: #ffffff;
+  --s-ink: #1c2523;
+  --s-mut: #5b6663;
+  --s-brd: #e2e8e5;
+  --s-soft: #f0f4f2;
+  --s-btn-bg: #1c2523;
+  --s-btn-fg: #ffffff;
+
+  /* Verdict text colours (AA on the card background) — used for labels and counts. */
+  --v-sup: #0d5a51;
+  --v-con: #a03a26;
+  --v-mis: #7c4d08;
+  --v-unv: #475569;
+
+  /* Verdict base colours — used for the icon strokes, and for highlights in M3. */
+  --v-sup-base: #12766b;
+  --v-con-base: #c24a32;
+  --v-mis-base: #a16207;
+  --v-unv-base: #64748b;
+
+  --s-font-head: 'Cabin', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --s-font-body: 'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto,
+    'Helvetica Neue', Arial, sans-serif;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  /* The popup is a fixed 400px column (design box 400 × 560). */
+  width: 400px;
+  background: var(--s-card);
+  color: var(--s-ink);
+  font: 400 13px/1.45 var(--s-font-body);
+  -webkit-font-smoothing: antialiased;
+}
+
+:focus-visible {
+  outline: 2px solid var(--s-ink);
+  outline-offset: 2px;
+}
+
+/* Visible to screen readers only — never used to hide anything a sighted
+   reader needs, only to name what an icon already says. */
+.rv-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Shell                                                                       */
+/* -------------------------------------------------------------------------- */
+
+.rv-app {
+  display: flex;
+  flex-direction: column;
+  background: var(--s-card);
+}
+
+.rv-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--s-brd);
+}
+
+.rv-logo {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  background: var(--s-btn-bg);
+  color: var(--s-btn-fg);
+}
+
+.rv-wordmark {
+  font: 700 16px var(--s-font-head);
+  color: var(--s-ink);
+}
+
+.rv-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px;
+}
+
+/* The checking state packs the stepper and the rows a little tighter. */
+.rv-stack-check {
+  gap: 12px;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Ready state                                                                 */
+/* -------------------------------------------------------------------------- */
+
+.rv-article {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 12px 14px;
+  background: var(--s-soft);
+  border: 1px solid var(--s-brd);
+  border-radius: 10px;
+}
+
+.rv-article-title {
+  font: 600 14.5px/1.4 var(--s-font-body);
+  color: var(--s-ink);
+  /* Tab titles run long ("… — Yahoo News"); three lines, then ellipsis. */
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+.rv-article-meta {
+  font: 400 12.5px var(--s-font-body);
+  color: var(--s-mut);
+}
+
+.rv-privacy {
+  margin: 0;
+  font: 400 12.5px/1.5 var(--s-font-body);
+  color: var(--s-mut);
+}
+
+.rv-footnote {
+  margin: 0;
+  font: 400 12.5px/1.5 var(--s-font-body);
+  color: var(--s-mut);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Buttons                                                                     */
+/* -------------------------------------------------------------------------- */
+
+/* Carries the "arrives later" tooltip for a disabled button: a disabled control
+   receives no pointer events, so its own `title` may never surface. */
+.rv-btn-slot {
+  display: block;
+}
+
+.rv-btn {
+  width: 100%;
+  border-radius: 10px;
+  font-family: var(--s-font-body);
+  cursor: pointer;
+  transition: opacity 0.15s ease-out;
+}
+
+.rv-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.rv-btn-primary {
+  border: none;
+  padding: 14px;
+  background: var(--s-btn-bg);
+  color: var(--s-btn-fg);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.rv-btn-secondary {
+  border: 1.5px solid var(--s-brd);
+  padding: 11px;
+  background: transparent;
+  color: var(--s-ink);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+/* The done state's report button is primary-shaped but a notch smaller, as in
+   the demo's two-button row. */
+.rv-btn-compact {
+  padding: 11px;
+  font-size: 13.5px;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Stepper                                                                     */
+/* -------------------------------------------------------------------------- */
+
+.rv-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.rv-step {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.rv-step-dot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  font: 600 10px var(--s-font-body);
+}
+
+.rv-step-done .rv-step-dot {
+  background: var(--s-btn-bg);
+  color: var(--s-btn-fg);
+}
+
+.rv-step-active .rv-step-dot {
+  border: 2px solid var(--s-ink);
+  animation: rv-pulse 1.2s ease-in-out infinite;
+}
+
+.rv-step-pending .rv-step-dot {
+  border: 1.5px solid var(--s-brd);
+}
+
+.rv-step-label {
+  font: 600 13px var(--s-font-body);
+  color: var(--s-ink);
+}
+
+.rv-step-pending .rv-step-label {
+  font-weight: 400;
+  color: var(--s-mut);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Claim rows                                                                  */
+/* -------------------------------------------------------------------------- */
+
+.rv-rows {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  border-top: 1px solid var(--s-brd);
+  list-style: none;
+}
+
+.rv-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 34px;
+  padding: 8px 2px;
+  border-bottom: 1px solid var(--s-brd);
+}
+
+.rv-row-ring {
+  flex: none;
+  width: 15px;
+  height: 15px;
+  border: 1.5px solid var(--s-brd);
+  border-radius: 50%;
+  animation: rv-pulse 1.4s ease-in-out infinite;
+}
+
+.rv-row-skeleton {
+  flex: 1;
+  max-width: 220px;
+  height: 9px;
+  border-radius: 5px;
+  background: var(--s-soft);
+}
+
+.rv-row-icon {
+  flex: none;
+  color: var(--rv-verdict-mark);
+}
+
+.rv-row-quote {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: 400 13px/1.35 var(--s-font-body);
+  color: var(--s-ink);
+}
+
+/* Rule 4 of CLAUDE.md: a verdict is never colour alone. Every row carries the
+   icon *and* this label. */
+.rv-row-verdict {
+  flex: none;
+  white-space: nowrap;
+  font: 600 13px var(--s-font-body);
+  color: var(--rv-verdict);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Verdict roles                                                               */
+/* -------------------------------------------------------------------------- */
+
+.rv-v-supported {
+  --rv-verdict: var(--v-sup);
+  --rv-verdict-mark: var(--v-sup-base);
+}
+
+.rv-v-contradicted {
+  --rv-verdict: var(--v-con);
+  --rv-verdict-mark: var(--v-con-base);
+}
+
+.rv-v-missing_context {
+  --rv-verdict: var(--v-mis);
+  --rv-verdict-mark: var(--v-mis-base);
+}
+
+.rv-v-unverifiable {
+  --rv-verdict: var(--v-unv);
+  --rv-verdict-mark: var(--v-unv-base);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Done state                                                                  */
+/* -------------------------------------------------------------------------- */
+
+.rv-summary {
+  margin: 0;
+  font: 600 14px/1.5 var(--s-font-body);
+  color: var(--s-ink);
+}
+
+.rv-count {
+  color: var(--rv-verdict);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Error state                                                                 */
+/* -------------------------------------------------------------------------- */
+
+.rv-error {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 14px;
+  background: var(--s-soft);
+  border: 1px solid var(--s-brd);
+  border-radius: 10px;
+}
+
+.rv-error-title {
+  font: 600 14px/1.4 var(--s-font-body);
+  color: var(--s-ink);
+}
+
+.rv-error-message {
+  font: 400 13px/1.55 var(--s-font-body);
+  color: var(--s-mut);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Motion                                                                      */
+/* -------------------------------------------------------------------------- */
+
+@keyframes rv-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+/* CLAUDE.md rule 9. The popup runs no JS-driven animation, so this media query
+   is the whole story here; anything rAF-driven added later needs its own
+   matchMedia('(prefers-reduced-motion: reduce)') guard. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}

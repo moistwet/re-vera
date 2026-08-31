@@ -1,0 +1,38 @@
+{
+  "name": "re-vera-extension",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Re-Vera — Chrome MV3 extension that fact-checks the article you are reading, only when you ask.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "gen": "json2ts --input ../shared/schema.json --output src/types/schema.ts --bannerComment '/* eslint-disable */\n/**\n * GENERATED — do not hand-edit, run shared/generate.sh\n * Source of truth: shared/schema.json\n */'"
+  },
+  "dependencies": {
+    "@mozilla/readability": "^0.6.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
+  },
+  "devDependencies": {
+    "@crxjs/vite-plugin": "^2.7.1",
+    "@eslint/js": "^10.0.1",
+    "@types/chrome": "^0.2.7",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.5",
+    "@vitejs/plugin-react": "^5.2.0",
+    "eslint": "^10.9.1",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "json-schema-to-typescript": "^16.0.0",
+    "typescript": "~5.9.3",
+    "typescript-eslint": "^8.68.0",
+    "vite": "^7.3.6",
+    "vitest": "^4.1.11"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["esbuild"]
+  }
+}

@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!--
+      No stylesheet <link> to any remote font CDN, and no remote origin of any
+      kind: the popup uses the system font stack (see theme.css), so it renders
+      offline and leaks nothing on open. MV3's CSP forbids inline script, so
+      main.tsx is loaded as an external module and Vite rewrites the path at
+      build time.
+    -->
+    <title>Re-Vera</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="./main.tsx"></script>
+  </body>
+</html>
